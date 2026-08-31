@@ -24,4 +24,4 @@ _Avoid_: base — the base is a ref that moves, the fork point is a fixed commit
 
 **Landed**:
 A lane whose branch its remote retired, or whose commits trunk already contains — checked
-against git refs alone, nothing lane itself records. Collectable by `lane prune`.
+against git refs alone, nothing lane itself records. Collectable by `lane --prune`.

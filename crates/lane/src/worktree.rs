@@ -348,7 +348,7 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
         .count();
         if carried > 0 {
             notes.push(format!(
-                "warning: {carried} uncommitted change(s) were not carried\n    lane rm {name} && lane new {name} --dirty   to start over with them"
+                "warning: {carried} uncommitted change(s) were not carried\n    lane -D {name} && lane {name} --dirty   to start over with them"
             ));
         }
     }

@@ -39,17 +39,17 @@ Lane requires Rust 1.85 or newer.
 
 ## Setup
 
-For each new shell, install the `lane shellenv` wrapper so `lane new`, `lane enter`/`switch`,
-`lane exit`, and a bare `lane <name>` `cd` for you. Add it to `.zshrc` or `.bashrc`:
+For each new shell, install the `lane --shellenv` wrapper so a bare `lane <name>` and
+`lane --exit` `cd` for you. Add it to `.zshrc` or `.bashrc`:
 
 ```sh
-eval "$(lane shellenv)"
+eval "$(lane --shellenv)"
 ```
 
 For fish, add this to `config.fish` instead:
 
 ```sh
-lane shellenv fish | source
+lane --shellenv fish | source
 ```
 
 > Without it, those commands still print the destination path; you just have to `cd` there
@@ -59,7 +59,7 @@ Then initialize each repository:
 
 ```sh
 $ cd yourrepo
-$ lane init
+$ lane --init
 ```
 
 This creates `.lane/` and reports whether the filesystem supports reflinks.
@@ -71,38 +71,44 @@ $ lane fix-login
 
 # edit and commit as usual
 
-$ lane exit
+$ lane --exit
 $ lane fix-login   # back into the same lane
-$ lane prune
+$ lane --prune
 ```
 
 `lane <name>` is the everyday form: it enters the lane if it already exists, or creates it
-first if it does not — mirroring `git wt <branch>`. A name that collides with a command
-(`ls`, `rm`, and so on) always runs the command; that lane still reaches `lane enter <name>`.
-`lane new <name>` stays around for when you want creation to be explicit, or need `--base`/
-`--dirty` spelled out.
+first if it does not — mirroring `git wt <branch>`. Every bare positional argument is a lane
+name; there is no separate command surface to collide with, so a lane may be named anything,
+including `ls` or `prune`.
 
-Because a bare name creates a branch, a name within a typo's distance of a command is
-refused rather than created — `lane pruen` suggests `lane prune`. If you really want a lane
-by that name, `lane new pruen` takes it.
+`lane <name>` creates a branch and worktree under `.lane/trees/` when the lane does not exist
+yet. On APFS, btrfs, and reflink-enabled XFS, ignored files are cloned by reference; otherwise
+lane creates a normal Git worktree and skips them. `--base <rev>` branches from a specific ref
+instead of the default base, and `--dirty` carries uncommitted work into the new lane. Both
+apply only on creation.
 
-`lane new <name>` (and the bare `lane <name>` form, on creation) creates a branch and
-worktree under `.lane/trees/`. On APFS, btrfs, and reflink-enabled XFS, ignored files are
-cloned by reference; otherwise lane creates a normal Git worktree and skips them. `--base
-<rev>` branches from a specific ref instead of the default base, and `--dirty` carries
-uncommitted work into the new lane.
+`lane`, or `lane --list`/`-l`, lists each lane's state (`open`, `pushed`, or `landed`) and
+worktree status; add `--json` for machine-readable output (with or without `--list`).
 
-`lane ls` lists each lane's state (`open`, `pushed`, or `landed`) and worktree status; add
-`--json` for machine-readable output.
+`lane -d <name>...` removes one or more lanes' branches and worktrees, refusing on a lane
+where it would discard uncommitted work or commits trunk does not have; `-D`/`--force-delete`
+discards them anyway.
 
-`lane rm <name>` removes a lane's branch and worktree, refusing if it would discard
-uncommitted work or commits trunk does not have. `--force` discards it anyway.
-
-`lane prune` removes every lane whose branch has landed — its remote retired, or its commits
+`lane --prune` removes every lane whose branch has landed — its remote retired, or its commits
 already contained in trunk — leaving open lanes and anything committed after landing alone.
 Add `--dry-run` to see what it would remove without removing anything.
 
-`lane completions fish|bash|zsh` prints a completion script for that shell.
+`lane --completions fish|bash|zsh` prints a completion script for that shell. It completes
+lane names as bare arguments and after `-d`/`-D`. Install it where your shell looks:
+
+```sh
+$ lane --completions fish > ~/.config/fish/completions/lane.fish
+$ lane --completions bash > ~/.local/share/bash-completion/completions/lane
+$ lane --completions zsh  > ~/.zsh/completions/_lane   # a directory on your $fpath
+```
+
+The zsh script is an autoloaded `#compdef` function, so it must be a file named `_lane` on
+`$fpath` — sourcing it directly will not work.
 
 ## Development
 
@@ -113,7 +119,7 @@ $ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo test --workspace
 $ ./scripts/test.sh           # end to end against temporary Git repositories
 $ ./scripts/check-linux.sh    # run the same gates without reflink support
-$ ./scripts/bench.sh          # time `lane new`/`lane rm` against a synthetic repository
+$ ./scripts/bench.sh          # time `lane <name>`/`lane -D` against a synthetic repository
 ```
 
 ## License

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Times `lane new` and `lane rm` against a synthetic repository.
+# Times `lane <name>` and `lane -D` against a synthetic repository.
 #
 # The cost lane pays is one syscall per ignored file, so the file COUNT is the variable
 # that matters and the byte total is not. Run it on the filesystem you care about: ext4
@@ -28,7 +28,7 @@ TIMEFORMAT='%R'
 # argument the extent-sharing test makes.
 lower() { awk -v a="$1" -v b="$2" 'BEGIN{print (b < a) ? b : a}'; }
 
-# `lane rm` returns before the unlinking does; waiting keeps it out of the next reading.
+# `lane -D` returns before the unlinking does; waiting keeps it out of the next reading.
 settle() {
   local i
   for i in $(seq 1 120); do
@@ -75,7 +75,7 @@ else
   ln -sf "$REPO/src/m2.rs" node_modules/absolute-link
 fi
 
-"$LANE" init >/dev/null 2>&1
+"$LANE" --init >/dev/null 2>&1
 git add -A >/dev/null 2>&1 && git commit -qm lane >/dev/null 2>&1
 
 echo "kernel=$(uname -sr | tr ' ' '-')"
@@ -87,15 +87,15 @@ echo "mode=$MODE"
 echo "ignored_files=$(find target node_modules -type f 2>/dev/null | wc -l | tr -d ' ')"
 echo "ignored_bytes=$(du -sk target node_modules 2>/dev/null | awk '{s+=$1} END{printf "%.0fMiB", s/1024}')"
 
-"$LANE" new probe > /tmp/bench-probe.out 2>&1
+"$LANE" probe > /tmp/bench-probe.out 2>&1
 echo "reflink=$(awk '/reflink:/{print $2; exit}' /tmp/bench-probe.out)"
 echo "clone_stats=$(awk '/cloned/{$1=$1; print; exit}' /tmp/bench-probe.out)"
-"$LANE" rm probe --force >/dev/null 2>&1
+"$LANE" -D probe >/dev/null 2>&1
 settle "$REPO"
 
 # One untimed pair first: the first read of a cold tree is measuring the page cache.
-"$LANE" new warm >/dev/null 2>&1
-"$LANE" rm warm --force >/dev/null 2>&1
+"$LANE" warm >/dev/null 2>&1
+"$LANE" -D warm >/dev/null 2>&1
 settle "$REPO"
 
 # Both timings come from one loop: a lane must be removed before the next can be made, and
@@ -109,9 +109,9 @@ run() {
 
 new_best=""; rm_best=""
 for _ in $(seq 1 "$RUNS"); do
-  t=$( { time run "$LANE" new bench; } 2>&1 )
+  t=$( { time run "$LANE" bench; } 2>&1 )
   new_best=$(lower "${new_best:-$t}" "$t")
-  t=$( { time run "$LANE" rm bench --force; } 2>&1 )
+  t=$( { time run "$LANE" -D bench; } 2>&1 )
   rm_best=$(lower "${rm_best:-$t}" "$t")
   settle "$REPO"
 done
