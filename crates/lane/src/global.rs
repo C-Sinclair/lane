@@ -85,8 +85,17 @@ pub fn list_global(json: bool) -> Result<i32> {
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(0);
     }
+    // An empty registry and registered repositories that simply hold no lanes are different
+    // situations, and only the first one is the reader's to act on.
     if rows.is_empty() {
-        println!("no lanes");
+        match repos.len() {
+            0 => {
+                println!("no repositories registered");
+                println!("  lane registers one when you run `lane --init` or create a lane in it");
+            }
+            1 => println!("no lanes in the 1 registered repository"),
+            n => println!("no lanes in any of the {n} registered repositories"),
+        }
         return Ok(0);
     }
     for line in format_global_rows(&rows) {

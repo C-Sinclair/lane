@@ -55,6 +55,18 @@ is "--init writes no AGENTS.md" "$([ -f AGENTS.md ] && echo yes || echo no)" "no
 
 echo "== 1b. -g lists lanes across repositories, self-heals, and rejects conflicting flags =="
 setup
+# An empty registry, registered repos holding no lanes, and lanes to show are three
+# different answers, and none of them may read as the local listing's "no lanes".
+rm -rf "$XDG_STATE_HOME/lane"
+is "-g says so when no repository is registered" \
+   "$("$LANE" -g 2>&1 | grep -c '^no repositories registered')" "1"
+is "and names how one gets registered" \
+   "$("$LANE" -g 2>&1 | grep -c 'lane --init')" "1"
+"$LANE" --init > /dev/null
+is "-g distinguishes a registered repo with no lanes" \
+   "$("$LANE" -g 2>&1 | grep -c 'no lanes in the 1 registered repository')" "1"
+is "which is not the local listing's wording" \
+   "$("$LANE" -g 2>&1 | grep -cx 'no lanes')" "0"
 "$LANE" alpha-lane > /dev/null 2>&1
 
 mkdir -p "$TMP/repo2" && cd "$TMP/repo2"
