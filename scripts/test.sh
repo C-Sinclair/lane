@@ -13,6 +13,9 @@ LANE="$TARGET/debug/lane"
 [ -x "$LANE" ] || { echo "no binary at $LANE"; exit 1; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# Every lane invocation below registers its repo; keep that registry out of the real
+# ~/.local/state/lane/repos so the suite never touches state that outlives it.
+export XDG_STATE_HOME="$TMP/state"
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "  ok   - $1"; }
 bad() { fail=$((fail+1)); echo "  FAIL - $1"; }
@@ -49,6 +52,40 @@ is ".lane/ exists" "$([ -d .lane ] && echo yes)" "yes"
 is "--init reports a reflink verdict" \
    "$("$LANE" --init | grep -c 'reflink')" "1"
 is "--init writes no AGENTS.md" "$([ -f AGENTS.md ] && echo yes || echo no)" "no"
+
+echo "== 1b. -g lists lanes across repositories, self-heals, and rejects conflicting flags =="
+setup
+"$LANE" alpha-lane > /dev/null 2>&1
+
+mkdir -p "$TMP/repo2" && cd "$TMP/repo2"
+git init -qb main . > /dev/null && git config user.email t@t.t && git config user.name t
+git config commit.gpgsign false
+echo x > f && git add -A && git commit -qm base
+"$LANE" --init > /dev/null
+"$LANE" beta-lane > /dev/null 2>&1
+
+is "-g lists a lane from the first repo" \
+   "$("$LANE" -g | awk '$1 == "repo" && $2 == "alpha-lane" { n++ } END { print n + 0 }')" "1"
+is "-g lists a lane from the second repo" \
+   "$("$LANE" -g | awk '$1 == "repo2" && $2 == "beta-lane" { n++ } END { print n + 0 }')" "1"
+
+REGISTRY="$XDG_STATE_HOME/lane/repos"
+is "the registry recorded both repos" "$(wc -l < "$REGISTRY" | tr -d ' ')" "2"
+
+rm -rf "$TMP/repo2"
+is "-g drops a repo deleted from disk rather than erroring" \
+   "$("$LANE" -g > /dev/null 2>&1; echo $?)" "0"
+is "and rewrites the registry to drop it" "$(wc -l < "$REGISTRY" | tr -d ' ')" "1"
+
+is "-g combined with --prune exits 2" \
+   "$("$LANE" -g --prune > /dev/null 2>&1; echo $?)" "2"
+is "and reports a usage error" "$("$LANE" -g --init 2>&1 | grep -c '^error:')" "1"
+
+is "-g --json is valid JSON with the expected fields" \
+   "$("$LANE" -g --json | python3 -c 'import json,sys
+d = json.load(sys.stdin)[0]
+fields = ("repo", "lane", "committed_at", "disk_estimate_bytes", "ahead", "behind", "state")
+print(int(all(f in d for f in fields)))')" "1"
 
 echo "== 2. a bare name: warm cache arrives, tracked files from git, status clean =="
 setup

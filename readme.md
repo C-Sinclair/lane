@@ -90,6 +90,28 @@ apply only on creation.
 `lane`, or `lane --list`/`-l`, lists each lane's state (`open`, `pushed`, or `landed`) and
 worktree status; add `--json` for machine-readable output (with or without `--list`).
 
+`lane -g`/`--global` lists lanes across every repository lane knows about, not just the one
+you are standing in: `REPO`, `LANE`, `AGE` (time since the lane branch's last commit),
+`DISK`, `COMMITS` (divergence from that repository's trunk, as `+ahead -behind`), and
+`STATE`, sorted most-recently-active first. `--json` works with it too, and carries the
+commit timestamp as a raw unix time rather than the rendered `AGE` string. `-g` walks every
+lane's working tree to compute `DISK`, so it is slower than a plain `lane --list` — expect it
+to take longer the more lanes you have and the larger their build caches are.
+
+`DISK` is an estimate, not a filesystem measurement: neither APFS nor Linux exposes a cheap
+"bytes unique to this file" query, and `stat`'s block count reports a reflinked file's full
+allocation whether or not its extents are still shared, so tools like `du` cannot answer this
+either. Lane instead sums the apparent size of every file in the lane that differs from its
+counterpart in the main checkout by size or modification time, plus every file the lane has
+that the main checkout does not — an approximation of the storage a lane has stopped sharing
+with the checkout it was cloned from, not a precise accounting of disk blocks.
+
+`-g` reads from a small registry of repository paths at `$XDG_STATE_HOME/lane/repos` (or
+`~/.local/state/lane/repos`), one absolute path per line. Lane writes to it on `--init` and
+on every successful lane creation, and heals it on every read: an entry whose repository has
+moved or been deleted is dropped rather than reported as an error. It is a cache, not
+configuration — safe to delete, and lane rebuilds it as you use it again.
+
 `lane -d <name>...` removes one or more lanes' branches and worktrees, refusing on a lane
 where it would discard uncommitted work or commits trunk does not have; `-D`/`--force-delete`
 discards them anyway.

@@ -44,7 +44,7 @@ pub enum Shell {
 /// store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
-    List { json: bool },
+    List { json: bool, global: bool },
     Open(OpenArgs),
     Delete(DeleteArgs),
     Prune { dry_run: bool },
@@ -122,6 +122,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
 
     let list = pargs.contains(["-l", "--list"]);
     let json = pargs.contains("--json");
+    let global = pargs.contains(["-g", "--global"]);
     let delete = pargs.contains(["-d", "--delete"]);
     let force_delete = pargs.contains(["-D", "--force-delete"]);
     let prune = pargs.contains("--prune");
@@ -130,7 +131,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let exit = pargs.contains("--exit");
     let shellenv = pargs.contains("--shellenv");
     let completions = pargs.contains("--completions");
-    let base: Option<String> = pargs.opt_value_from_str("--base")?;
+    let base: Option<String> = pargs.opt_value_from_str(["-b", "--base"])?;
     let dirty = pargs.contains("--dirty");
 
     let positionals = positionals(pargs, after, Help::Root)?;
@@ -179,11 +180,11 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
 
     // Each modifier belongs to exactly one operation; anywhere else it is a
     // usage error rather than something silently ignored.
-    let (base_ok, dirty_ok, json_ok, dry_run_ok) = match selected {
-        Selected::Open => (true, true, false, false),
-        Selected::List => (false, false, true, false),
-        Selected::Prune => (false, false, false, true),
-        _ => (false, false, false, false),
+    let (base_ok, dirty_ok, json_ok, dry_run_ok, global_ok) = match selected {
+        Selected::Open => (true, true, false, false, false),
+        Selected::List => (false, false, true, false, true),
+        Selected::Prune => (false, false, false, true, false),
+        _ => (false, false, false, false, false),
     };
     if base.is_some() && !base_ok {
         return Err(misplaced("--base", Help::Root));
@@ -196,6 +197,9 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     }
     if dry_run && !dry_run_ok {
         return Err(misplaced("--dry-run", Help::Root));
+    }
+    if global && !global_ok {
+        return Err(misplaced("-g/--global", Help::Root));
     }
 
     let parsed = match selected {
@@ -235,7 +239,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
         }
         Selected::List => {
             none(positionals, Help::Root)?;
-            Parsed::List { json }
+            Parsed::List { json, global }
         }
         Selected::Open => {
             let name = one(positionals, "<NAME>", Help::Root)?;

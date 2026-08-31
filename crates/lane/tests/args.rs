@@ -25,7 +25,13 @@ fn err(words: &[&str]) -> String {
 
 #[test]
 fn bare_lane_lists_and_the_help_flags_reach_the_root_screen() {
-    assert_eq!(ok(&[]), Parsed::List { json: false });
+    assert_eq!(
+        ok(&[]),
+        Parsed::List {
+            json: false,
+            global: false
+        }
+    );
     assert_eq!(ok(&["-h"]), Parsed::Help(Help::Root));
     assert_eq!(ok(&["--help"]), Parsed::Help(Help::Root));
 }
@@ -61,16 +67,86 @@ fn help_wins_over_the_arguments_beside_it() {
 
 #[test]
 fn no_args_lists() {
-    assert_eq!(ok(&[]), Parsed::List { json: false });
+    assert_eq!(
+        ok(&[]),
+        Parsed::List {
+            json: false,
+            global: false
+        }
+    );
 }
 
 #[test]
 fn list_takes_only_json() {
-    assert_eq!(ok(&["--list"]), Parsed::List { json: false });
-    assert_eq!(ok(&["-l"]), Parsed::List { json: false });
-    assert_eq!(ok(&["--json"]), Parsed::List { json: true });
-    assert_eq!(ok(&["--list", "--json"]), Parsed::List { json: true });
+    assert_eq!(
+        ok(&["--list"]),
+        Parsed::List {
+            json: false,
+            global: false
+        }
+    );
+    assert_eq!(
+        ok(&["-l"]),
+        Parsed::List {
+            json: false,
+            global: false
+        }
+    );
+    assert_eq!(
+        ok(&["--json"]),
+        Parsed::List {
+            json: true,
+            global: false
+        }
+    );
+    assert_eq!(
+        ok(&["--list", "--json"]),
+        Parsed::List {
+            json: true,
+            global: false
+        }
+    );
     assert!(err(&["--list", "extra"]).contains("unexpected argument 'extra' found"));
+}
+
+#[test]
+fn global_lists_across_repositories() {
+    assert_eq!(
+        ok(&["-g"]),
+        Parsed::List {
+            json: false,
+            global: true
+        }
+    );
+    assert_eq!(
+        ok(&["--global"]),
+        Parsed::List {
+            json: false,
+            global: true
+        }
+    );
+    assert_eq!(
+        ok(&["-l", "-g"]),
+        Parsed::List {
+            json: false,
+            global: true
+        }
+    );
+    assert_eq!(
+        ok(&["-g", "--json"]),
+        Parsed::List {
+            json: true,
+            global: true
+        }
+    );
+}
+
+#[test]
+fn global_is_a_usage_error_combined_with_anything_but_listing() {
+    assert!(err(&["-g", "--prune"]).contains("-g/--global does not apply here"));
+    assert!(err(&["-g", "-d", "spike"]).contains("-g/--global does not apply here"));
+    assert!(err(&["-g", "--init"]).contains("-g/--global does not apply here"));
+    assert!(err(&["-g", "fix-login"]).contains("-g/--global does not apply here"));
 }
 
 #[test]
@@ -221,7 +297,13 @@ fn a_word_that_is_not_a_flag_is_a_lane_name() {
 
 #[test]
 fn structured_read_commands_take_json() {
-    assert_eq!(ok(&["--json"]), Parsed::List { json: true });
+    assert_eq!(
+        ok(&["--json"]),
+        Parsed::List {
+            json: true,
+            global: false
+        }
+    );
     assert!(err(&["--list", "--jsonn"]).contains("unexpected argument '--jsonn' found"));
 }
 

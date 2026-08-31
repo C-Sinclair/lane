@@ -58,8 +58,9 @@ const ROOT: &str = "
 
   Options
     -l, --list                 List lanes
+    -g, --global               List lanes across every repository (slower: walks working trees)
         --json                 Emit machine-readable JSON (with or without --list)
-        --base <rev>           Branch from <rev> instead of the default base (create only)
+    -b, --base <rev>           Branch from <rev> instead of the default base (create only)
         --dirty                Carry uncommitted work into the lane (create only)
     -d, --delete <name>...     Delete lane(s) and branch(es), refusing on loss
     -D, --force-delete         Delete anyway, discarding whatever it holds
@@ -77,6 +78,7 @@ const ROOT: &str = "
     $ lane fix-login              Creates it, or enters it if it already exists
     $ lane hotfix --base v1.2.0
     $ lane -d fix-login old-spike
+    $ lane -g                     Every lane across every repository lane knows about
     $ lane --prune
     $ eval \"$(lane --shellenv)\"
 

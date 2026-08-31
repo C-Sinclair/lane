@@ -188,6 +188,17 @@ fn excluded(root: &Path) -> HashSet<String> {
 pub struct Lane {
     pub path: PathBuf,
     pub branch: String,
+    /// The name that addresses this lane on the command line.
+    pub name: String,
+}
+
+/// A lane's name is its path below `.lane/trees/`, not the last segment of it: a lane on
+/// `feat/login` lives two directories deep, and `login` alone addresses nothing.
+fn name_of(root: &Path, path: &Path) -> String {
+    path.strip_prefix(lanes_dir(root))
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
 }
 
 pub fn list_lanes(root: &Path) -> Vec<Lane> {
@@ -197,8 +208,10 @@ pub fn list_lanes(root: &Path) -> Vec<Lane> {
 
     let flush = |path: &mut String, branch: &mut String, lanes: &mut Vec<Lane>| {
         if !path.is_empty() && Path::new(path.as_str()) != root {
+            let path_buf = PathBuf::from(path.as_str());
             lanes.push(Lane {
-                path: PathBuf::from(path.as_str()),
+                name: name_of(root, &path_buf),
+                path: path_buf,
                 branch: if branch.is_empty() {
                     "detached".into()
                 } else {
@@ -425,6 +438,7 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
     };
 
     record_fork(&root, name, &base)?;
+    crate::registry::register_best_effort(&root);
 
     Ok(Created {
         path: dest,
@@ -707,6 +721,18 @@ pub fn contained_in(root: &Path, trunk: &str, branch: &str) -> bool {
     };
     let cherry = try_git(&["cherry", trunk, &probe], Some(root));
     !cherry.is_empty() && cherry.lines().all(|line| line.starts_with('-'))
+}
+
+/// A lane's `open`/`pushed`/`landed` state, shared by the local listing and `-g`.
+pub fn lane_state(root: &Path, trunk: &str, lane: &Lane) -> &'static str {
+    if landed(root, trunk, &lane.branch) {
+        return "landed";
+    }
+    let upstream = try_git(&["rev-parse", "@{upstream}"], Some(&lane.path));
+    if !upstream.is_empty() && try_git(&["rev-parse", "HEAD"], Some(&lane.path)) == upstream {
+        return "pushed";
+    }
+    "open"
 }
 
 /// Advance trunk to branch: merge when trunk is checked out, update-ref when it is not.

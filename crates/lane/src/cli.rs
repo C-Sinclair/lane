@@ -39,7 +39,7 @@ pub fn run() -> Result<i32> {
         }
         Parsed::Init => init(),
         Parsed::Open(args) => open(&args.name, args.base.as_deref(), args.dirty),
-        Parsed::List { json } => list(json),
+        Parsed::List { json, global } => list(json, global),
         Parsed::Delete(args) => delete(&args.names, args.force),
         Parsed::Exit => exit(),
         Parsed::Prune { dry_run } => prune(dry_run),
@@ -54,6 +54,7 @@ fn init() -> Result<i32> {
     std::fs::create_dir_all(&lane)?;
     std::fs::write(lane.join(".gitkeep"), "")?;
 
+    crate::registry::register_best_effort(&root);
     let (ok, detail) = crate::cow::probe(&root);
     println!("initialized .lane/");
     println!(
@@ -128,7 +129,10 @@ fn format_lane_rows(rows: &[LaneRow]) -> Vec<String> {
         .collect()
 }
 
-fn list(json: bool) -> Result<i32> {
+fn list(json: bool, global: bool) -> Result<i32> {
+    if global {
+        return crate::global::list_global(json);
+    }
     let root = wt::main_root()?;
     let lanes = wt::list_lanes(&root);
     let dirty: Vec<bool> = std::thread::scope(|scope| {
@@ -141,25 +145,13 @@ fn list(json: bool) -> Result<i32> {
             .map(|handle| handle.join().expect("status worker panicked"))
             .collect()
     });
+    let trunk = wt::trunk_name(&root);
     let rows: Vec<_> = lanes
         .into_iter()
         .zip(dirty)
         .map(|(lane, dirty)| {
-            let name = lane
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let upstream = try_git(&["rev-parse", "@{upstream}"], Some(&lane.path));
-            let state = if wt::landed(&root, &wt::trunk_name(&root), &lane.branch) {
-                "landed"
-            } else if !upstream.is_empty()
-                && try_git(&["rev-parse", "HEAD"], Some(&lane.path)) == upstream
-            {
-                "pushed"
-            } else {
-                "open"
-            };
+            let name = lane.name.clone();
+            let state = wt::lane_state(&root, &trunk, &lane);
             LaneRow {
                 name,
                 path: lane.path.to_string_lossy().to_string(),
@@ -199,11 +191,7 @@ fn prune(dry_run: bool) -> Result<i32> {
     let mut removed = 0;
     let mut skipped = 0;
     for lane in lanes {
-        let name = lane
-            .path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let name = lane.name.clone();
         if !wt::landed(&root, &trunk, &lane.branch) {
             continue;
         }
@@ -333,6 +321,7 @@ fn completions(shell: args::Shell) -> Result<i32> {
 complete -c lane -s h -l help
 complete -c lane -s V -l version
 complete -c lane -s l -l list
+complete -c lane -s g -l global
 complete -c lane -l json
 complete -c lane -l base -x
 complete -c lane -l dirty
@@ -367,7 +356,7 @@ complete -c lane -n '__fish_seen_argument -s d -s D' -a "(command lane 2>/dev/nu
     esac
   done
 
-  COMPREPLY=($(compgen -W "$(lanes) -l --list --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init --exit --shellenv --completions -h --help -V --version" -- "$cur"))
+  COMPREPLY=($(compgen -W "$(lanes) -l --list -g --global --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init --exit --shellenv --completions -h --help -V --version" -- "$cur"))
 }}
 complete -F _lane lane"#,
         ),
@@ -377,7 +366,7 @@ complete -F _lane lane"#,
 _lane() {{
   local -a lanes flags
   lanes=(${{(f)"$(command lane 2>/dev/null | awk '{{print $1}}')"}})
-  flags=(-l --list --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init --exit --shellenv --completions -h --help -V --version)
+  flags=(-l --list -g --global --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init --exit --shellenv --completions -h --help -V --version)
 
   case "${{words[CURRENT-1]}}" in
     --shellenv) compadd -- fish bash zsh posix; return ;;
