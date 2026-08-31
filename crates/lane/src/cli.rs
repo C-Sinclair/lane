@@ -41,6 +41,7 @@ pub fn run() -> Result<i32> {
         Parsed::Open(args) => open(&args.name, args.base.as_deref(), args.dirty),
         Parsed::List { json, global } => list(json, global),
         Parsed::Delete(args) => delete(&args.names, args.force),
+        Parsed::Info { name, json } => crate::info::show(name.as_deref(), json),
         Parsed::Exit => exit(),
         Parsed::Prune { dry_run } => prune(dry_run),
         Parsed::Shellenv(shell) => shellenv(shell),
@@ -224,7 +225,7 @@ fn prune(dry_run: bool) -> Result<i32> {
     Ok(i32::from(skipped > 0))
 }
 
-fn lane_named(root: &Path, name: &str) -> Result<PathBuf> {
+pub(crate) fn lane_named(root: &Path, name: &str) -> Result<PathBuf> {
     let dest = wt::lanes_dir(root).join(name);
     if !dest.exists() {
         bail!("no lane named {name}");
@@ -289,7 +290,7 @@ fn shellenv(shell: args::Shell) -> Result<i32> {
         args::Shell::Fish => println!(
             r#"function lane
   switch "$argv[1]"
-    case '--exit'
+    case '-e' '--exit'
       set -l p (command lane $argv); or return
       cd $p
     case '' '-*'
@@ -304,7 +305,7 @@ end"#
             r#"lane() {{
   local p
   case "$1" in
-    --exit) p=$(command lane "$@") || return; cd "$p" ;;
+    -e|--exit) p=$(command lane "$@") || return; cd "$p" ;;
     ""|-*)  command lane "$@" ;;
     *)      p=$(command lane "$@") || return; cd "$p" ;;
   esac
@@ -327,14 +328,15 @@ complete -c lane -l base -x
 complete -c lane -l dirty
 complete -c lane -s d -l delete
 complete -c lane -s D -l force-delete
+complete -c lane -s i -l info
 complete -c lane -l prune
 complete -c lane -l dry-run
 complete -c lane -l init
-complete -c lane -l exit
+complete -c lane -s e -l exit
 complete -c lane -l shellenv -xa 'fish bash zsh posix'
 complete -c lane -l completions -xa 'fish bash zsh'
 complete -c lane -n '__fish_is_first_arg' -a "(command lane 2>/dev/null | awk '{{print \$1}}')"
-complete -c lane -n '__fish_seen_argument -s d -s D' -a "(command lane 2>/dev/null | awk '{{print \$1}}')""#
+complete -c lane -n '__fish_seen_argument -s d -s D -s i' -a "(command lane 2>/dev/null | awk '{{print \$1}}')""#
         ),
         args::Shell::Bash => println!(
             r#"_lane() {{
@@ -351,12 +353,12 @@ complete -c lane -n '__fish_seen_argument -s d -s D' -a "(command lane 2>/dev/nu
 
   for w in "${{COMP_WORDS[@]}}"; do
     case "$w" in
-      -d|--delete|-D|--force-delete)
+      -d|--delete|-D|--force-delete|-i|--info)
         COMPREPLY=($(compgen -W "$(lanes)" -- "$cur")); return ;;
     esac
   done
 
-  COMPREPLY=($(compgen -W "$(lanes) -l --list -g --global --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init --exit --shellenv --completions -h --help -V --version" -- "$cur"))
+  COMPREPLY=($(compgen -W "$(lanes) -l --list -g --global -i --info --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init -e --exit --shellenv --completions -h --help -V --version" -- "$cur"))
 }}
 complete -F _lane lane"#,
         ),
@@ -366,7 +368,7 @@ complete -F _lane lane"#,
 _lane() {{
   local -a lanes flags
   lanes=(${{(f)"$(command lane 2>/dev/null | awk '{{print $1}}')"}})
-  flags=(-l --list -g --global --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init --exit --shellenv --completions -h --help -V --version)
+  flags=(-l --list -g --global -i --info --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init -e --exit --shellenv --completions -h --help -V --version)
 
   case "${{words[CURRENT-1]}}" in
     --shellenv) compadd -- fish bash zsh posix; return ;;
@@ -376,7 +378,7 @@ _lane() {{
 
   for w in "${{words[@]}}"; do
     case "$w" in
-      -d|--delete|-D|--force-delete) compadd -a lanes; return ;;
+      -d|--delete|-D|--force-delete|-i|--info) compadd -a lanes; return ;;
     esac
   done
 

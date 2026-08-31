@@ -91,7 +91,7 @@ fn forget_fork(root: &Path, branch: &str) {
     try_git(&["update-ref", "-d", &fork_ref(branch)], Some(root));
 }
 
-fn fork_point(root: &Path, branch: &str) -> Option<String> {
+pub(crate) fn fork_point(root: &Path, branch: &str) -> Option<String> {
     let sha = try_git(
         &["rev-parse", "--verify", "--quiet", &fork_ref(branch)],
         Some(root),
@@ -194,7 +194,7 @@ pub struct Lane {
 
 /// A lane's name is its path below `.lane/trees/`, not the last segment of it: a lane on
 /// `feat/login` lives two directories deep, and `login` alone addresses nothing.
-fn name_of(root: &Path, path: &Path) -> String {
+pub(crate) fn name_of(root: &Path, path: &Path) -> String {
     path.strip_prefix(lanes_dir(root))
         .unwrap_or(path)
         .to_string_lossy()

@@ -54,11 +54,13 @@ const ROOT: &str = "
     $ lane
     $ lane <name> [--base <rev>] [--dirty]
     $ lane -d|-D <name>...
+    $ lane -i [<name>]
     $ lane [options]
 
   Options
     -l, --list                 List lanes
     -g, --global               List lanes across every repository (slower: walks working trees)
+    -i, --info [<name>]        Describe one lane in detail (defaults to the lane you are standing in)
         --json                 Emit machine-readable JSON (with or without --list)
     -b, --base <rev>           Branch from <rev> instead of the default base (create only)
         --dirty                Carry uncommitted work into the lane (create only)
@@ -67,7 +69,7 @@ const ROOT: &str = "
         --prune                Remove landed lanes
         --dry-run              With --prune, list what would go, remove nothing
         --init                 Initialize lane in the repository
-        --exit                 Return to the main worktree
+    -e, --exit                 Return to the main worktree
         --shellenv [shell]     Print shell integration (fish, bash, zsh, posix)
         --completions <shell>  Print completions (fish, bash, zsh)
     -h, --help                 Display this message
@@ -79,6 +81,7 @@ const ROOT: &str = "
     $ lane hotfix --base v1.2.0
     $ lane -d fix-login old-spike
     $ lane -g                     Every lane across every repository lane knows about
+    $ lane -i fix-login           Detail on that lane, from anywhere in the repo
     $ lane --prune
     $ eval \"$(lane --shellenv)\"
 

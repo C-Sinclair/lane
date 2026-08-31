@@ -47,6 +47,7 @@ pub enum Parsed {
     List { json: bool, global: bool },
     Open(OpenArgs),
     Delete(DeleteArgs),
+    Info { name: Option<String>, json: bool },
     Prune { dry_run: bool },
     Init,
     Exit,
@@ -64,6 +65,7 @@ enum Op {
     List,
     Delete,
     ForceDelete,
+    Info,
     Prune,
     Init,
     Exit,
@@ -77,9 +79,10 @@ impl Op {
             Op::List => "-l/--list",
             Op::Delete => "-d/--delete",
             Op::ForceDelete => "-D/--force-delete",
+            Op::Info => "-i/--info",
             Op::Prune => "--prune",
             Op::Init => "--init",
-            Op::Exit => "--exit",
+            Op::Exit => "-e/--exit",
             Op::Shellenv => "--shellenv",
             Op::Completions => "--completions",
         }
@@ -94,6 +97,7 @@ enum Selected {
     Open,
     Delete,
     ForceDelete,
+    Info,
     Prune,
     Init,
     Exit,
@@ -125,10 +129,11 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let global = pargs.contains(["-g", "--global"]);
     let delete = pargs.contains(["-d", "--delete"]);
     let force_delete = pargs.contains(["-D", "--force-delete"]);
+    let info = pargs.contains(["-i", "--info"]);
     let prune = pargs.contains("--prune");
     let dry_run = pargs.contains("--dry-run");
     let init = pargs.contains("--init");
-    let exit = pargs.contains("--exit");
+    let exit = pargs.contains(["-e", "--exit"]);
     let shellenv = pargs.contains("--shellenv");
     let completions = pargs.contains("--completions");
     let base: Option<String> = pargs.opt_value_from_str(["-b", "--base"])?;
@@ -145,6 +150,9 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     }
     if force_delete {
         ops.push(Op::ForceDelete);
+    }
+    if info {
+        ops.push(Op::Info);
     }
     if prune {
         ops.push(Op::Prune);
@@ -169,6 +177,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
         Some(Op::List) => Selected::List,
         Some(Op::Delete) => Selected::Delete,
         Some(Op::ForceDelete) => Selected::ForceDelete,
+        Some(Op::Info) => Selected::Info,
         Some(Op::Prune) => Selected::Prune,
         Some(Op::Init) => Selected::Init,
         Some(Op::Exit) => Selected::Exit,
@@ -183,6 +192,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let (base_ok, dirty_ok, json_ok, dry_run_ok, global_ok) = match selected {
         Selected::Open => (true, true, false, false, false),
         Selected::List => (false, false, true, false, true),
+        Selected::Info => (false, false, true, false, false),
         Selected::Prune => (false, false, false, true, false),
         _ => (false, false, false, false, false),
     };
@@ -224,6 +234,10 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
             let word = one(positionals, "<SHELL>", Help::Root)?;
             let shell = shell_named(&word, &["fish", "bash", "zsh"], Help::Root)?;
             Parsed::Completions(shell)
+        }
+        Selected::Info => {
+            let name = optional_one(positionals, Help::Root)?;
+            Parsed::Info { name, json }
         }
         Selected::Prune => {
             none(positionals, Help::Root)?;

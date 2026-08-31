@@ -4,5 +4,6 @@ pub mod cow;
 pub mod git;
 pub mod global;
 pub mod help;
+pub mod info;
 pub mod registry;
 pub mod worktree;

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end suite for `lane`: isolated, copy-on-write git worktrees. Covers the
-# flag surface (--init, a bare name, --list, --exit, -d/-D, --prune, --shellenv,
-# --completions). The clone layer and anchor-free worktree logic are covered in
-# depth by `cargo test`.
+# flag surface (--init, a bare name, --list, --exit, -d/-D, -i/--info, --prune,
+# --shellenv, --completions). The clone layer and anchor-free worktree logic are
+# covered in depth by `cargo test`.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -185,11 +185,17 @@ LP_REAL=$(cd .lane/trees/here && pwd -P)
 is "a bare name against an existing lane prints its path" "$("$LANE" here)" "$LP_REAL"
 ROOT_REAL=$(pwd -P)
 is "--exit prints the repo root" "$("$LANE" --exit)" "$ROOT_REAL"
+is "-e is --exit, from inside the lane" \
+   "$(cd "$LP_REAL" && "$LANE" -e)" "$ROOT_REAL"
 is "entering without shell integration warns on a terminal only" \
    "$("$LANE" here 2>&1 >/dev/null | grep -c 'shell integration')" "0"
 
 echo "== 8. --shellenv prints the shell wrapper =="
 is "--shellenv defines a lane() function" "$("$LANE" --shellenv | grep -c '^lane() {')" "1"
+is "-e is an alias for --exit in both wrappers" \
+   "$("$LANE" --shellenv posix | grep -c -- '-e|--exit')" "1"
+is "and in the fish wrapper's cd branch" \
+   "$("$LANE" --shellenv fish | grep -c -- "case '-e' '--exit'")" "1"
 is "--exit is matched before the general dash case" \
    "$("$LANE" --shellenv | grep -c -- '--exit)')" "1"
 is "an empty or dashed first word never cds" \
@@ -446,6 +452,55 @@ if [ -x "$FISH" ]; then
 else
   echo "== 16. fish not found at $FISH, skipping =="
 fi
+
+echo "== 17. -i/--info describes one lane =="
+setup
+"$LANE" feat-login > /dev/null 2>&1
+LP="$TMP/repo/.lane/trees/feat-login"
+
+is "-i <name> from the repo root names that lane" \
+   "$("$LANE" -i feat-login | awk '$1 == "lane" { print $2 }')" "feat-login"
+is "-i <name> reports the branch" \
+   "$("$LANE" -i feat-login | awk '$1 == "branch" { print $2 }')" "feat-login"
+is "-i <name> reports the state" \
+   "$("$LANE" -i feat-login | awk '$1 == "state" { print $2 }')" "open"
+is "-i <name> reports a fork point" \
+   "$("$LANE" -i feat-login | grep -c '^forked from  ')" "1"
+is "-i <name> reports the trunk" \
+   "$("$LANE" -i feat-login | awk '$1 == "trunk" { print $2 }')" "main"
+
+is "-i inside a lane names that lane with no argument" \
+   "$(cd "$LP" && "$LANE" -i | awk '$1 == "lane" { print $2 }')" "feat-login"
+
+is "-i with no name and no lane underfoot exits 1" \
+   "$("$LANE" -i > /dev/null 2>&1; echo $?)" "1"
+is "and tells the reader to name one" \
+   "$("$LANE" -i 2>&1 | grep -c 'name one')" "1"
+
+is "-i on an unknown name errors" \
+   "$("$LANE" -i ghost 2>&1 | grep -c 'no lane named ghost')" "1"
+is "and exits 1" "$("$LANE" -i ghost > /dev/null 2>&1; echo $?)" "1"
+
+is "-i --json is valid JSON carrying the expected keys" \
+   "$("$LANE" -i feat-login --json | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+fields = ("lane", "branch", "path", "state", "created_at", "fork_point", "trunk",
+          "trunk_ahead", "trunk_behind", "committed_at", "last_commit",
+          "upstream", "upstream_ahead", "upstream_behind", "uncommitted",
+          "disk_estimate_bytes")
+print(int(all(f in d for f in fields)))')" "1"
+is "a lane this tool created has a recorded fork point in JSON too" \
+   "$("$LANE" -i feat-login --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["fork_point"] is not None)')" "True"
+
+( cd "$LP" && echo "fn work() {}" > src/work.rs && echo "fn work2() {}" > src/work2.rs )
+is "-i reports the uncommitted file count" \
+   "$("$LANE" -i feat-login | awk '$1 == "uncommitted" { print $2, $3 }')" "2 files"
+is "and the same count in --json" \
+   "$("$LANE" -i feat-login --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["uncommitted"])')" "2"
+
+is "-i with a conflicting operation flag exits 2" \
+   "$("$LANE" -i feat-login --prune > /dev/null 2>&1; echo $?)" "2"
+is "and reports a usage error" "$("$LANE" -i --prune 2>&1 | grep -c '^error:')" "1"
 
 echo
 echo "$pass passed, $fail failed"

@@ -142,7 +142,7 @@ fn build_row(job: &Job) -> GlobalRow {
 /// every file in the lane that is not byte-for-byte identical to its counterpart in the main
 /// checkout (by size or mtime, not content), plus every file the lane has that the main
 /// checkout does not. That approximates unshared storage without ever reading file content.
-fn disk_estimate(lane: &Path, main_root: &Path) -> u64 {
+pub(crate) fn disk_estimate(lane: &Path, main_root: &Path) -> u64 {
     // An empty relative path is the walk's own root, which `filter_entry` also visits:
     // skipping it there prunes the entire walk rather than one entry.
     let skip = |rel: &Path| rel.starts_with(".git") || rel.starts_with(".lane/trees");
@@ -169,7 +169,7 @@ fn disk_estimate(lane: &Path, main_root: &Path) -> u64 {
 
 /// `git rev-list --left-right --count trunk...branch` prints "<trunk-only> <branch-only>",
 /// i.e. how far the lane is behind trunk, then how far it is ahead.
-fn parse_left_right(out: &str) -> (u32, u32) {
+pub(crate) fn parse_left_right(out: &str) -> (u32, u32) {
     let mut parts = out.split_whitespace();
     let behind = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     let ahead = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -177,7 +177,7 @@ fn parse_left_right(out: &str) -> (u32, u32) {
 }
 
 /// Compact "time since" for AGE: `3h`, `2d`, `3w`, `4mo`, `2y`.
-fn format_age(seconds: i64) -> String {
+pub(crate) fn format_age(seconds: i64) -> String {
     let seconds = seconds.max(0);
     let minutes = seconds / 60;
     let hours = seconds / 3600;
@@ -201,7 +201,7 @@ fn format_age(seconds: i64) -> String {
 }
 
 /// `+3`, `+1 -12`, or empty when the lane and trunk are in sync.
-fn format_commits(ahead: u32, behind: u32) -> String {
+pub(crate) fn format_commits(ahead: u32, behind: u32) -> String {
     match (ahead, behind) {
         (0, 0) => String::new(),
         (ahead, 0) => format!("+{ahead}"),
@@ -210,7 +210,7 @@ fn format_commits(ahead: u32, behind: u32) -> String {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     let mb = bytes as f64 / (1024.0 * 1024.0);
     if mb < 1.0 {
         format!("{} KB", bytes / 1024)
@@ -221,7 +221,7 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

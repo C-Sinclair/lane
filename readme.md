@@ -112,6 +112,18 @@ on every successful lane creation, and heals it on every read: an entry whose re
 moved or been deleted is dropped rather than reported as an error. It is a cache, not
 configuration — safe to delete, and lane rebuilds it as you use it again.
 
+`lane -i`/`--info` describes one lane in detail: the lane you are standing in with no name,
+or `lane -i <name>` from anywhere in the repo. It reports the lane's branch and path, its
+state, when it was created, the commit it forked from, how it has diverged from trunk and
+from its upstream, its last commit, uncommitted work, and disk use. `--json` works with it
+too, as a single object of raw values — unix timestamps rather than rendered ages, and
+separate `ahead`/`behind` counts.
+
+`created` is not something lane stores: it comes from the worktree directory's own
+filesystem creation time, which is when the lane was actually made — not the branch's
+reflog, which would date the branch instead for a lane that adopted an existing one. `disk`
+is the same estimate `-g`'s `DISK` column reports, described above.
+
 `lane -d <name>...` removes one or more lanes' branches and worktrees, refusing on a lane
 where it would discard uncommitted work or commits trunk does not have; `-D`/`--force-delete`
 discards them anyway.
@@ -121,7 +133,7 @@ already contained in trunk — leaving open lanes and anything committed after l
 Add `--dry-run` to see what it would remove without removing anything.
 
 `lane --completions fish|bash|zsh` prints a completion script for that shell. It completes
-lane names as bare arguments and after `-d`/`-D`. Install it where your shell looks:
+lane names as bare arguments and after `-d`/`-D`/`-i`. Install it where your shell looks:
 
 ```sh
 $ lane --completions fish > ~/.config/fish/completions/lane.fish

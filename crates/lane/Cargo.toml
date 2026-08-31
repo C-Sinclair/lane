@@ -31,6 +31,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
+# Only for rendering `-i`'s CREATED row in the reader's local time: everything else in lane
+# is either a raw unix timestamp or a duration git itself already resolved.
 # Both separators are off by default; clap accepted `--base=main` and `-psrc/x.rs`,
 # and a reader who types either should not be told the flag has no value.
 pico-args = { version = "0.5.0", features = ["eq-separator", "short-space-opt"] }
