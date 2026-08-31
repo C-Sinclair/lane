@@ -5,21 +5,69 @@
 //! without a process. `-h`/`--help` anywhere in a command's arguments wins over
 //! the rest of them, and a bare `lane` prints the root screen. Words after `--`
 //! are positional whatever they look like, which is what lets a name start with
-//! a dash.
+//! a dash. A first word that is not a known subcommand and does not start with
+//! `-` is read as a lane name to create or enter — a known subcommand always
+//! wins over a same-named lane.
 
 use crate::help::Help;
 use anyhow::Result;
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Every command that appears in help, for the typo suggestion.
+/// Every command that appears in help, for the near-miss check on a bare name.
 const COMMANDS: &[&str] = &[
-    "init", "new", "enter", "switch", "exit", "ls", "prune", "rm", "shellenv",
+    "init",
+    "new",
+    "enter",
+    "switch",
+    "exit",
+    "ls",
+    "prune",
+    "rm",
+    "shellenv",
+    "completions",
 ];
+
+/// The command a bare name was probably meant to be.
+///
+/// A bare name creates a lane, so a mistyped subcommand would otherwise leave a branch and
+/// a worktree named after the typo. Two edits is the bound: past that the guess is noise
+/// rather than a typo.
+pub fn nearest_command(typed: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .map(|name| (distance(typed, name), *name))
+        .filter(|(d, _)| *d <= 2)
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, name)| name)
+}
+
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0; b.len() + 1];
+    for (i, ac) in a.chars().enumerate() {
+        cur[0] = i + 1;
+        for (j, bc) in b.iter().enumerate() {
+            let cost = usize::from(ac != *bc);
+            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewArgs {
+    pub name: String,
+    pub base: Option<String>,
+    pub dirty: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenArgs {
     pub name: String,
     pub base: Option<String>,
     pub dirty: bool,
@@ -31,18 +79,31 @@ pub struct RmArgs {
     pub force: bool,
 }
 
+/// Which shell a rendered script (`shellenv`, `completions`) targets. `bash`,
+/// `zsh`, and `posix` all render the same POSIX `shellenv` form; `completions`
+/// has no `Posix` script and rejects the word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shell {
+    Fish,
+    Bash,
+    Zsh,
+    Posix,
+}
+
 /// What the argument list asked for. `Help` and `Version` are answers in their
 /// own right rather than a flag on a command, because neither reaches the store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
     Init,
     New(NewArgs),
+    Open(OpenArgs),
     Ls { json: bool },
     Enter { name: String },
     Exit,
     Prune { dry_run: bool },
     Rm(RmArgs),
-    Shellenv,
+    Shellenv(Shell),
+    Completions(Shell),
     Help(Help),
     Version,
 }
@@ -67,12 +128,15 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
         Some("exit") => bare(rest(raw), Help::Exit, Parsed::Exit),
         Some("prune") => parse_prune(rest(raw)),
         Some("rm") => parse_rm(rest(raw)),
-        Some("shellenv") => bare(rest(raw), Help::Shellenv, Parsed::Shellenv),
+        Some("shellenv") => parse_shellenv(rest(raw)),
+        Some("completions") => parse_completions(rest(raw)),
         Some("-h" | "--help") => Ok(Parsed::Help(Help::Root)),
         Some("-V" | "--version") => Ok(Parsed::Version),
         None => Ok(Parsed::Help(Help::Root)),
         Some(other) if other.starts_with('-') => Err(unexpected(other, Help::Root)),
-        Some(other) => Err(unrecognized(other)),
+        // Not a known subcommand: read it as a lane name to create or enter.
+        // A subcommand added later always shadows a lane of the same name.
+        Some(_) => parse_open(raw),
     }
 }
 
@@ -131,6 +195,18 @@ fn none(got: Vec<String>, help: Help) -> Result<()> {
     }
 }
 
+/// A command whose whole surface is zero or one word.
+fn optional_one(got: Vec<String>, help: Help) -> Result<Option<String>> {
+    let mut got = got.into_iter();
+    let Some(first) = got.next() else {
+        return Ok(None);
+    };
+    match got.next() {
+        Some(extra) => Err(unexpected(&extra, help)),
+        None => Ok(Some(first)),
+    }
+}
+
 /// A command with no arguments of its own.
 fn bare(raw: Vec<OsString>, help: Help, parsed: Parsed) -> Result<Parsed> {
     let (flags, after) = terminated(raw);
@@ -167,6 +243,21 @@ fn parse_new(raw: Vec<OsString>) -> Result<Parsed> {
     Ok(Parsed::New(NewArgs { name, base, dirty }))
 }
 
+/// A bare lane name, with `new`'s creation flags available for the case where
+/// it does not exist yet. `raw` here still has the name as its first word,
+/// since there is no command word to drop.
+fn parse_open(raw: Vec<OsString>) -> Result<Parsed> {
+    let (flags, after) = terminated(raw);
+    let mut pargs = pico_args::Arguments::from_vec(flags);
+    if pargs.contains(["-h", "--help"]) {
+        return Ok(Parsed::Help(Help::Open));
+    }
+    let base = pargs.opt_value_from_str("--base")?;
+    let dirty = pargs.contains("--dirty");
+    let name = one(positionals(pargs, after, Help::Open)?, "<NAME>", Help::Open)?;
+    Ok(Parsed::Open(OpenArgs { name, base, dirty }))
+}
+
 fn parse_ls(raw: Vec<OsString>) -> Result<Parsed> {
     let (flags, after) = terminated(raw);
     let mut pargs = pico_args::Arguments::from_vec(flags);
@@ -200,6 +291,59 @@ fn parse_rm(raw: Vec<OsString>) -> Result<Parsed> {
     Ok(Parsed::Rm(RmArgs { name, force }))
 }
 
+fn parse_shellenv(raw: Vec<OsString>) -> Result<Parsed> {
+    let (flags, after) = terminated(raw);
+    let mut pargs = pico_args::Arguments::from_vec(flags);
+    if pargs.contains(["-h", "--help"]) {
+        return Ok(Parsed::Help(Help::Shellenv));
+    }
+    let word = optional_one(positionals(pargs, after, Help::Shellenv)?, Help::Shellenv)?;
+    let shell = match word {
+        None => detect_shell(),
+        Some(word) => shell_named(&word, &["fish", "bash", "zsh", "posix"], Help::Shellenv)?,
+    };
+    Ok(Parsed::Shellenv(shell))
+}
+
+fn parse_completions(raw: Vec<OsString>) -> Result<Parsed> {
+    let (flags, after) = terminated(raw);
+    let mut pargs = pico_args::Arguments::from_vec(flags);
+    if pargs.contains(["-h", "--help"]) {
+        return Ok(Parsed::Help(Help::Completions));
+    }
+    let word = one(
+        positionals(pargs, after, Help::Completions)?,
+        "<SHELL>",
+        Help::Completions,
+    )?;
+    let shell = shell_named(&word, &["fish", "bash", "zsh"], Help::Completions)?;
+    Ok(Parsed::Completions(shell))
+}
+
+fn shell_named(word: &str, accepted: &[&str], help: Help) -> Result<Shell> {
+    match word {
+        "fish" if accepted.contains(&"fish") => Ok(Shell::Fish),
+        "bash" if accepted.contains(&"bash") => Ok(Shell::Bash),
+        "zsh" if accepted.contains(&"zsh") => Ok(Shell::Zsh),
+        "posix" if accepted.contains(&"posix") => Ok(Shell::Posix),
+        other => Err(unknown_shell(other, accepted, help)),
+    }
+}
+
+/// The basename of `$SHELL`, falling back to `posix` when it is unset or is not
+/// one lane has a dedicated script for.
+fn detect_shell() -> Shell {
+    let name = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    match name.as_deref() {
+        Some("fish") => Shell::Fish,
+        Some("bash") => Shell::Bash,
+        Some("zsh") => Shell::Zsh,
+        _ => Shell::Posix,
+    }
+}
+
 fn unexpected(token: &str, help: Help) -> anyhow::Error {
     // A word that only looks like a flag — a branch named `-x` — has somewhere
     // to go, and the reader is told where rather than left to guess.
@@ -228,40 +372,11 @@ fn missing(absent: &[&str], help: Help) -> anyhow::Error {
     )
 }
 
-fn unrecognized(typed: &str) -> anyhow::Error {
-    let tip = match nearest(typed, COMMANDS) {
-        Some(name) => format!("\n\n  tip: a similar subcommand exists: '{name}'"),
-        None => String::new(),
-    };
+fn unknown_shell(got: &str, accepted: &[&str], help: Help) -> anyhow::Error {
     anyhow::anyhow!(
-        "unrecognized subcommand '{typed}'{tip}\n\nUsage: {}\n\nFor more information, try '{} --help'.",
-        Help::Root.usage(),
-        Help::Root.invocation()
+        "unknown shell '{got}', expected one of: {}\n\nUsage: {}\n\nFor more information, try '{} --help'.",
+        accepted.join(", "),
+        help.usage(),
+        help.invocation()
     )
-}
-
-/// The closest command name, when one is close enough to be worth offering.
-/// Two edits is the bound: past that the guess is noise rather than a typo.
-fn nearest(typed: &str, choices: &'static [&'static str]) -> Option<&'static str> {
-    choices
-        .iter()
-        .map(|name| (distance(typed, name), *name))
-        .filter(|(d, _)| *d <= 2)
-        .min_by_key(|(d, _)| *d)
-        .map(|(_, name)| name)
-}
-
-fn distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ac) in a.chars().enumerate() {
-        cur[0] = i + 1;
-        for (j, bc) in b.iter().enumerate() {
-            let cost = usize::from(ac != *bc);
-            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
 }

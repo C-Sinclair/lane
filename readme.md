@@ -40,10 +40,16 @@ Lane requires Rust 1.85 or newer.
 ## Setup
 
 For each new shell, install the `lane shellenv` wrapper so `lane new`, `lane enter`/`switch`,
-and `lane exit` `cd` for you. Add it to `.zshrc` or `.bashrc`:
+`lane exit`, and a bare `lane <name>` `cd` for you. Add it to `.zshrc` or `.bashrc`:
 
 ```sh
 eval "$(lane shellenv)"
+```
+
+For fish, add this to `config.fish` instead:
+
+```sh
+lane shellenv fish | source
 ```
 
 > Without it, those commands still print the destination path; you just have to `cd` there
@@ -61,19 +67,30 @@ This creates `.lane/` and reports whether the filesystem supports reflinks.
 ## Usage
 
 ```sh
-$ lane new fix-login
-$ lane enter fix-login
+$ lane fix-login
 
 # edit and commit as usual
 
 $ lane exit
+$ lane fix-login   # back into the same lane
 $ lane prune
 ```
 
-`lane new <name>` creates a branch and worktree under `.lane/trees/`. On APFS, btrfs, and
-reflink-enabled XFS, ignored files are cloned by reference; otherwise lane creates a normal
-Git worktree and skips them. `--base <rev>` branches from a specific ref instead of the
-default base, and `--dirty` carries uncommitted work into the new lane.
+`lane <name>` is the everyday form: it enters the lane if it already exists, or creates it
+first if it does not — mirroring `git wt <branch>`. A name that collides with a command
+(`ls`, `rm`, and so on) always runs the command; that lane still reaches `lane enter <name>`.
+`lane new <name>` stays around for when you want creation to be explicit, or need `--base`/
+`--dirty` spelled out.
+
+Because a bare name creates a branch, a name within a typo's distance of a command is
+refused rather than created — `lane pruen` suggests `lane prune`. If you really want a lane
+by that name, `lane new pruen` takes it.
+
+`lane new <name>` (and the bare `lane <name>` form, on creation) creates a branch and
+worktree under `.lane/trees/`. On APFS, btrfs, and reflink-enabled XFS, ignored files are
+cloned by reference; otherwise lane creates a normal Git worktree and skips them. `--base
+<rev>` branches from a specific ref instead of the default base, and `--dirty` carries
+uncommitted work into the new lane.
 
 `lane ls` lists each lane's state (`open`, `pushed`, or `landed`) and worktree status; add
 `--json` for machine-readable output.
@@ -84,6 +101,8 @@ uncommitted work or commits trunk does not have. `--force` discards it anyway.
 `lane prune` removes every lane whose branch has landed — its remote retired, or its commits
 already contained in trunk — leaving open lanes and anything committed after landing alone.
 Add `--dry-run` to see what it would remove without removing anything.
+
+`lane completions fish|bash|zsh` prints a completion script for that shell.
 
 ## Development
 

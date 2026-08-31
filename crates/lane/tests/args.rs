@@ -48,10 +48,12 @@ fn every_command_answers_its_own_help_flag() {
         ("prune", Help::Prune),
         ("rm", Help::Rm),
         ("shellenv", Help::Shellenv),
+        ("completions", Help::Completions),
     ] {
         assert_eq!(ok(&[word, "--help"]), Parsed::Help(screen), "{word} --help");
         assert_eq!(ok(&[word, "-h"]), Parsed::Help(screen), "{word} -h");
     }
+    assert_eq!(ok(&["fix-login", "--help"]), Parsed::Help(Help::Open));
 }
 
 #[test]
@@ -64,8 +66,73 @@ fn help_wins_over_the_arguments_beside_it() {
 fn commands_without_arguments_take_none() {
     assert_eq!(ok(&["init"]), Parsed::Init);
     assert_eq!(ok(&["ls"]), Parsed::Ls { json: false });
-    assert_eq!(ok(&["shellenv"]), Parsed::Shellenv);
     assert!(err(&["ls", "extra"]).contains("unexpected argument 'extra' found"));
+}
+
+#[test]
+fn a_bare_name_creates_or_enters_a_lane() {
+    assert_eq!(
+        ok(&["fix-login"]),
+        Parsed::Open(OpenArgs {
+            name: "fix-login".into(),
+            base: None,
+            dirty: false,
+        })
+    );
+    assert_eq!(
+        ok(&["spike", "--dirty"]),
+        Parsed::Open(OpenArgs {
+            name: "spike".into(),
+            base: None,
+            dirty: true,
+        })
+    );
+    assert_eq!(
+        ok(&["hotfix", "--base", "v1.2.0"]),
+        Parsed::Open(OpenArgs {
+            name: "hotfix".into(),
+            base: Some("v1.2.0".into()),
+            dirty: false,
+        })
+    );
+    assert!(err(&["fix-login", "extra"]).contains("unexpected argument 'extra' found"));
+}
+
+#[test]
+fn a_known_subcommand_wins_over_a_same_named_lane() {
+    assert_eq!(ok(&["exit"]), Parsed::Exit);
+    assert_eq!(ok(&["ls"]), Parsed::Ls { json: false });
+}
+
+#[test]
+fn shellenv_takes_an_optional_shell() {
+    assert_eq!(ok(&["shellenv", "fish"]), Parsed::Shellenv(Shell::Fish));
+    assert_eq!(ok(&["shellenv", "bash"]), Parsed::Shellenv(Shell::Bash));
+    assert_eq!(ok(&["shellenv", "zsh"]), Parsed::Shellenv(Shell::Zsh));
+    assert_eq!(ok(&["shellenv", "posix"]), Parsed::Shellenv(Shell::Posix));
+    assert!(matches!(ok(&["shellenv"]), Parsed::Shellenv(_)));
+    let message = err(&["shellenv", "csh"]);
+    assert!(message.contains("unknown shell 'csh'"), "{message}");
+    assert!(message.contains("fish, bash, zsh, posix"), "{message}");
+}
+
+#[test]
+fn completions_requires_a_shell() {
+    assert_eq!(
+        ok(&["completions", "fish"]),
+        Parsed::Completions(Shell::Fish)
+    );
+    assert_eq!(
+        ok(&["completions", "bash"]),
+        Parsed::Completions(Shell::Bash)
+    );
+    assert_eq!(ok(&["completions", "zsh"]), Parsed::Completions(Shell::Zsh));
+    let missing = err(&["completions"]);
+    assert!(missing.contains("the following required arguments were not provided"));
+    let message = err(&["completions", "posix"]);
+    assert!(message.contains("unknown shell 'posix'"), "{message}");
+    assert!(message.contains("fish, bash, zsh"), "{message}");
+    assert!(!message.contains("fish, bash, zsh, posix"), "{message}");
 }
 
 #[test]
@@ -145,8 +212,15 @@ fn a_word_that_only_looks_like_a_flag_is_told_where_to_go() {
 }
 
 #[test]
-fn the_old_done_command_no_longer_parses() {
-    assert!(parse_words(&["done"]).is_err());
+fn the_old_done_command_is_now_read_as_a_lane_name() {
+    assert_eq!(
+        ok(&["done"]),
+        Parsed::Open(OpenArgs {
+            name: "done".into(),
+            base: None,
+            dirty: false,
+        })
+    );
 }
 
 #[test]
@@ -180,15 +254,23 @@ fn a_flag_no_command_owns_is_refused() {
 }
 
 #[test]
-fn an_unknown_command_offers_the_one_that_was_meant() {
-    let message = err(&["nope"]);
-    assert!(
-        message.contains("unrecognized subcommand 'nope'"),
-        "{message}"
+fn a_word_that_is_not_a_flag_or_a_command_is_a_lane_name() {
+    assert_eq!(
+        ok(&["nope"]),
+        Parsed::Open(OpenArgs {
+            name: "nope".into(),
+            base: None,
+            dirty: false,
+        })
     );
-    assert!(err(&["nwe"]).contains("'new'"));
-    // Nothing within two edits: a guess would be noise, so none is offered.
-    assert!(!err(&["frobnicate"]).contains("tip:"));
+    assert_eq!(
+        ok(&["nwe"]),
+        Parsed::Open(OpenArgs {
+            name: "nwe".into(),
+            base: None,
+            dirty: false,
+        })
+    );
 }
 
 #[test]
@@ -204,7 +286,7 @@ fn every_command_the_root_screen_lists_parses() {
         .take_while(|line| !line.trim().is_empty())
         .filter_map(|line| line.split_whitespace().next())
         .collect();
-    assert_eq!(listed.len(), 8, "{listed:?}");
+    assert_eq!(listed.len(), 9, "{listed:?}");
     for name in listed {
         assert!(matches!(ok(&[name, "--help"]), Parsed::Help(_)), "{name}");
     }
@@ -216,12 +298,14 @@ fn every_screen_quotes_a_usage_line_it_agrees_with() {
         Help::Root,
         Help::Init,
         Help::New,
+        Help::Open,
         Help::Ls,
         Help::Enter,
         Help::Exit,
         Help::Prune,
         Help::Rm,
         Help::Shellenv,
+        Help::Completions,
     ] {
         let text = screen.text();
         assert!(text.starts_with('\n'), "{screen:?} opens with a blank line");
@@ -241,5 +325,12 @@ fn prune_takes_only_its_dry_run() {
     assert_eq!(ok(&["prune", "--help"]), Parsed::Help(Help::Prune));
     assert!(err(&["prune", "extra"]).contains("unexpected argument 'extra' found"));
     assert!(err(&["prune", "--dry"]).contains("unexpected argument '--dry' found"));
-    assert!(err(&["sweep"]).contains("unrecognized subcommand 'sweep'"));
+    assert_eq!(
+        ok(&["sweep"]),
+        Parsed::Open(OpenArgs {
+            name: "sweep".into(),
+            base: None,
+            dirty: false,
+        })
+    );
 }

@@ -13,12 +13,14 @@ pub enum Help {
     Root,
     Init,
     New,
+    Open,
     Ls,
     Enter,
     Exit,
     Prune,
     Rm,
     Shellenv,
+    Completions,
 }
 
 impl Help {
@@ -28,12 +30,14 @@ impl Help {
             Help::Root => ROOT,
             Help::Init => INIT,
             Help::New => NEW,
+            Help::Open => OPEN,
             Help::Ls => LS,
             Help::Enter => ENTER,
             Help::Exit => EXIT,
             Help::Prune => PRUNE,
             Help::Rm => RM,
             Help::Shellenv => SHELLENV,
+            Help::Completions => COMPLETIONS,
         }
     }
 
@@ -43,12 +47,14 @@ impl Help {
             Help::Root => "lane <COMMAND>",
             Help::Init => "lane init",
             Help::New => "lane new [OPTIONS] <NAME>",
+            Help::Open => "lane <NAME> [OPTIONS]",
             Help::Ls => "lane ls [--json]",
             Help::Enter => "lane enter <NAME>",
             Help::Exit => "lane exit",
             Help::Prune => "lane prune [--dry-run]",
             Help::Rm => "lane rm [--force] <NAME>",
-            Help::Shellenv => "lane shellenv",
+            Help::Shellenv => "lane shellenv [SHELL]",
+            Help::Completions => "lane completions <SHELL>",
         }
     }
 
@@ -65,12 +71,14 @@ impl Help {
             Help::Root => "lane",
             Help::Init => "lane init",
             Help::New => "lane new",
+            Help::Open => "lane <NAME>",
             Help::Ls => "lane ls",
             Help::Enter => "lane enter",
             Help::Exit => "lane exit",
             Help::Prune => "lane prune",
             Help::Rm => "lane rm",
             Help::Shellenv => "lane shellenv",
+            Help::Completions => "lane completions",
         }
     }
 }
@@ -82,6 +90,7 @@ impl Help {
 const ROOT: &str = "
   Usage
     $ lane <command> [options]
+    $ lane <name> [options]
 
   Commands
     init         Initialize lane in a repository
@@ -92,15 +101,19 @@ const ROOT: &str = "
     prune        Remove landed lanes
     rm           Discard a lane
     shellenv     Print shell integration
+    completions  Print shell completions
 
   Options
     -h, --help       Display this message
     -V, --version    Display current version
 
   Examples
-    $ lane new fix-login
+    $ lane fix-login          Creates it, or enters it if it already exists
     $ lane enter fix-login
     $ lane prune
+
+  A name that is not a command creates or enters a lane. A command name
+  always wins over a same-named lane.
 ";
 
 const INIT: &str = "
@@ -131,6 +144,24 @@ const NEW: &str = "
     $ lane new fix-login
     $ lane new spike --dirty
     $ lane new hotfix --base v1.2.0
+";
+
+const OPEN: &str = "
+  Description
+    Enter a lane, creating it first if it does not exist yet. A command
+    name always wins over a same-named lane.
+
+  Usage
+    $ lane <name> [options]
+
+  Options
+    --base <rev>    Branch from <rev> instead of the default base (create only)
+    --dirty         Carry uncommitted work into the lane (create only)
+    -h, --help      Display this message
+
+  Examples
+    $ lane fix-login
+    $ lane spike --dirty
 ";
 
 const LS: &str = "
@@ -199,12 +230,39 @@ const RM: &str = "
 
 const SHELLENV: &str = "
   Description
-    Print the shell function that makes `lane enter`, `lane exit`, and
-    `lane new` leave the shell in the right directory.
+    Print the shell function that makes `lane new`, `lane enter`/`switch`,
+    `lane exit`, and a bare `lane <name>` leave the shell in the right
+    directory. With no <shell>, it is detected from $SHELL; bash, zsh, and
+    posix all print the same POSIX form.
 
   Usage
-    $ eval \"$(lane shellenv)\"
+    $ lane shellenv [shell]
+
+  Shells
+    fish, bash, zsh, posix
 
   Options
     -h, --help    Display this message
+
+  Examples
+    $ eval \"$(lane shellenv)\"
+    $ lane shellenv fish | source
+";
+
+const COMPLETIONS: &str = "
+  Description
+    Print a shell completion script for lane.
+
+  Usage
+    $ lane completions <shell>
+
+  Shells
+    fish, bash, zsh
+
+  Options
+    -h, --help    Display this message
+
+  Examples
+    $ lane completions fish | source
+    $ lane completions bash > /etc/bash_completion.d/lane
 ";

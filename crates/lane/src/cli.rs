@@ -39,12 +39,14 @@ pub fn run() -> Result<i32> {
         }
         Parsed::Init => init(),
         Parsed::New(args) => new(&args.name, args.base.as_deref(), args.dirty),
+        Parsed::Open(args) => open(&args.name, args.base.as_deref(), args.dirty),
         Parsed::Ls { json } => ls(json),
         Parsed::Enter { name } => enter(&name),
         Parsed::Exit => exit(),
         Parsed::Prune { dry_run } => prune(dry_run),
         Parsed::Rm(args) => rm(&args.name, args.force),
-        Parsed::Shellenv => shellenv(),
+        Parsed::Shellenv(shell) => shellenv(shell),
+        Parsed::Completions(shell) => completions(shell),
     }
 }
 
@@ -78,6 +80,39 @@ fn new(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
     let tty = std::io::stdout().is_terminal();
     println!("{}", bold(&created.path.to_string_lossy(), tty));
     Ok(0)
+}
+
+/// `lane <name>`: enter it if it exists, otherwise create it as `lane new` would.
+fn open(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
+    let root = wt::main_root()?;
+    if lane_named(&root, name).is_ok() {
+        let mut conflicts = Vec::new();
+        if base.is_some() {
+            conflicts.push("--base");
+        }
+        if dirty {
+            conflicts.push("--dirty");
+        }
+        if !conflicts.is_empty() {
+            bail!(
+                "lane {name} already exists; {} only apply when creating a lane",
+                conflicts.join(" and ")
+            );
+        }
+        return enter(name);
+    }
+    // A typo would otherwise become a branch and a worktree. An existing branch of that
+    // name is the author's answer either way, and `lane new` says it outright.
+    let refname = format!("refs/heads/{name}");
+    let branch = git::git_ok(&["rev-parse", "--verify", "--quiet", &refname], Some(&root));
+    if !branch {
+        if let Some(similar) = args::nearest_command(name) {
+            eprintln!("error: no lane {name}; did you mean `lane {similar}`?");
+            eprintln!("  lane new {name}   to create a lane by that name anyway");
+            return Ok(2);
+        }
+    }
+    new(name, base, dirty)
 }
 
 #[derive(serde::Serialize)]
@@ -260,16 +295,102 @@ fn rm(name: &str, force: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn shellenv() -> Result<i32> {
-    println!(
-        r#"lane() {{
+// The wrapper lists what must NOT cd, not what must: a bare lane name now needs
+// one too, so "commands that cd" is no longer a fixed, enumerable set.
+fn shellenv(shell: args::Shell) -> Result<i32> {
+    match shell {
+        args::Shell::Fish => println!(
+            r#"function lane
+  switch "$argv[1]"
+    case '' '-h' '--help' '-V' '--version' 'init' 'ls' 'rm' 'prune' 'shellenv' 'completions'
+      command lane $argv
+    case '*'
+      set -l p (command lane $argv); or return
+      cd $p
+  end
+end"#
+        ),
+        args::Shell::Bash | args::Shell::Zsh | args::Shell::Posix => println!(
+            r#"lane() {{
   local p
   case "$1" in
-    new|enter|switch|exit) p=$(command lane "$@") || return; cd "$p" ;;
-    *)                     command lane "$@" ;;
+    ""|-h|--help|-V|--version|init|ls|rm|prune|shellenv|completions) command lane "$@" ;;
+    *) p=$(command lane "$@") || return; cd "$p" ;;
   esac
 }}"#
-    );
+        ),
+    }
+    Ok(0)
+}
+
+const COMPLETION_COMMANDS: &str = "init new enter switch exit ls prune rm shellenv completions";
+
+fn completions(shell: args::Shell) -> Result<i32> {
+    match shell {
+        args::Shell::Fish => println!(
+            r#"complete -c lane -f
+complete -c lane -n '__fish_use_subcommand' -a '{COMPLETION_COMMANDS}'
+complete -c lane -n '__fish_use_subcommand' -a "(command lane ls 2>/dev/null | awk '{{print \$1}}')"
+complete -c lane -n '__fish_use_subcommand' -s h -l help
+complete -c lane -n '__fish_use_subcommand' -s V -l version
+
+complete -c lane -n '__fish_seen_subcommand_from enter switch rm' -a "(command lane ls 2>/dev/null | awk '{{print \$1}}')"
+complete -c lane -n '__fish_seen_subcommand_from new' -l base
+complete -c lane -n '__fish_seen_subcommand_from new' -l dirty
+complete -c lane -n '__fish_seen_subcommand_from ls' -l json
+complete -c lane -n '__fish_seen_subcommand_from rm' -l force
+complete -c lane -n '__fish_seen_subcommand_from prune' -l dry-run"#
+        ),
+        args::Shell::Bash => println!(
+            r#"_lane() {{
+  local cur
+  cur="${{COMP_WORDS[COMP_CWORD]}}"
+  lanes() {{ command lane ls 2>/dev/null | awk '{{print $1}}'; }}
+
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=($(compgen -W "{COMPLETION_COMMANDS} $(lanes) -h --help -V --version" -- "$cur"))
+    return
+  fi
+
+  case "${{COMP_WORDS[1]}}" in
+    enter|switch) COMPREPLY=($(compgen -W "$(lanes)" -- "$cur")) ;;
+    rm) COMPREPLY=($(compgen -W "$(lanes) --force -h --help" -- "$cur")) ;;
+    new) COMPREPLY=($(compgen -W "--base --dirty -h --help" -- "$cur")) ;;
+    ls) COMPREPLY=($(compgen -W "--json -h --help" -- "$cur")) ;;
+    prune) COMPREPLY=($(compgen -W "--dry-run -h --help" -- "$cur")) ;;
+    *) COMPREPLY=() ;;
+  esac
+}}
+complete -F _lane lane"#,
+        ),
+        args::Shell::Zsh => println!(
+            r#"#compdef lane
+
+_lane() {{
+  local -a cmds lanes
+  cmds=({COMPLETION_COMMANDS})
+  lanes=(${{(f)"$(command lane ls 2>/dev/null | awk '{{print $1}}')"}})
+
+  if (( CURRENT == 2 )); then
+    compadd -a cmds
+    compadd -a lanes
+    compadd -- -h --help -V --version
+    return
+  fi
+
+  case "${{words[2]}}" in
+    enter|switch) compadd -a lanes ;;
+    rm) compadd -a lanes; compadd -- --force -h --help ;;
+    new) compadd -- --base --dirty -h --help ;;
+    ls) compadd -- --json -h --help ;;
+    prune) compadd -- --dry-run -h --help ;;
+  esac
+}}
+
+_lane "$@""#,
+        ),
+        args::Shell::Posix => bail!("no completion script for posix"),
+    }
     Ok(0)
 }
 

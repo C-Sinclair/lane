@@ -141,8 +141,8 @@ is "enter without shell integration warns on a terminal only" \
 
 echo "== 8. shellenv prints the shell wrapper =="
 is "shellenv defines a lane() function" "$("$LANE" shellenv | grep -c '^lane() {')" "1"
-is "shellenv routes new/enter/switch/exit through cd" \
-   "$("$LANE" shellenv | grep -c 'new|enter|switch|exit')" "1"
+is "shellenv cds for anything not on the non-cd list, a bare lane name included" \
+   "$("$LANE" shellenv | grep -c '""|-h|--help|-V|--version|init|ls|rm|prune|shellenv|completions)')" "1"
 
 echo "== 9. rm refuses before it destroys, and --force means everything =="
 setup
@@ -281,6 +281,70 @@ is "the fork commit survives an aggressive gc" \
    "$(git cat-file -e "$fork" 2>/dev/null && echo yes || echo no)" "yes"
 is "so an untouched lane is still not landed" \
    "$("$LANE" prune --dry-run 2>&1 | grep -c '^no landed lanes')" "1"
+
+echo "== 14. a bare lane name creates or enters =="
+setup
+"$LANE" fix-login > /tmp/open-new.out 2>&1
+LP="$TMP/repo/.lane/trees/fix-login"
+is "a bare name creates the lane" "$([ -d "$LP" ] && echo yes)" "yes"
+LP_REAL=$(cd "$LP" && pwd -P)
+is "a bare name against an existing lane prints the same path as enter" \
+   "$("$LANE" fix-login)" "$("$LANE" enter fix-login)"
+is "and that path is the lane's" "$("$LANE" fix-login)" "$LP_REAL"
+is "a known subcommand still wins over a same-named lane" \
+   "$("$LANE" new exit > /dev/null 2>&1; "$LANE" exit)" "$(pwd -P)"
+"$LANE" hotfix --base main > /tmp/open-base.out 2>&1
+is "--base works on create through the bare form" \
+   "$([ -d "$TMP/repo/.lane/trees/hotfix" ] && echo yes)" "yes"
+is "--base against an existing lane is refused" \
+   "$("$LANE" hotfix --base main 2>&1 | grep -c '^error:')" "1"
+
+# A bare name creates a branch and a worktree, so a mistyped subcommand must not become one.
+is "a near-miss of a subcommand is refused, not created" \
+   "$("$LANE" pruen 2>&1 | grep -c 'did you mean `lane prune`')" "1"
+is "and nothing was created for it" \
+   "$([ -d "$TMP/repo/.lane/trees/pruen" ] && echo yes || echo no)" "no"
+is "the near-miss exits 2, as a usage error" \
+   "$("$LANE" pruen > /dev/null 2>&1; echo $?)" "2"
+is "lane new takes the same name outright" \
+   "$("$LANE" new pruen > /dev/null 2>&1; [ -d "$TMP/repo/.lane/trees/pruen" ] && echo yes || echo no)" "yes"
+git branch prunee
+is "an existing branch outranks the near-miss check" \
+   "$("$LANE" prunee > /dev/null 2>&1; [ -d "$TMP/repo/.lane/trees/prunee" ] && echo yes || echo no)" "yes"
+
+echo "== 15. shellenv and completions cover fish, bash, zsh =="
+is "shellenv defaults to the posix function form" \
+   "$("$LANE" shellenv posix | grep -c '^lane() {')" "1"
+is "shellenv fish emits a fish function" \
+   "$("$LANE" shellenv fish | grep -c '^function lane')" "1"
+is "shellenv fish emits no posix esac" \
+   "$("$LANE" shellenv fish | grep -c 'esac')" "0"
+is "an unknown shellenv shell is refused" \
+   "$("$LANE" shellenv csh 2>&1 | grep -c '^error:')" "1"
+for shell in fish bash zsh; do
+  is "completions $shell emits something" \
+     "$([ -n "$("$LANE" completions "$shell")" ] && echo yes)" "yes"
+done
+is "an unknown completions shell is refused" \
+   "$("$LANE" completions csh 2>&1 | grep -c '^error:')" "1"
+
+FISH="/usr/local/bin/fish"
+if [ -x "$FISH" ]; then
+  echo "== 16. the fish wrapper actually works under fish =="
+  BINDIR="$(dirname "$LANE")"
+  fishrc="set -x PATH $BINDIR \$PATH; eval (lane shellenv fish | string collect)"
+  is "the fish wrapper parses" \
+     "$("$FISH" -c "$fishrc" 2>&1; echo $?)" "0"
+  setup
+  is "a non-cd command does not cd under fish" \
+     "$("$FISH" -c "$fishrc; and lane ls > /dev/null; and pwd -P")" \
+     "$(pwd -P)"
+  is "a failing invocation does not cd under fish" \
+     "$("$FISH" -c "$fishrc; lane enter ghost > /dev/null 2>&1; pwd -P")" \
+     "$(pwd -P)"
+else
+  echo "== 16. fish not found at $FISH, skipping =="
+fi
 
 echo
 echo "$pass passed, $fail failed"
