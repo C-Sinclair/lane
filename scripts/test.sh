@@ -93,10 +93,16 @@ is "-g combined with --prune exits 2" \
    "$("$LANE" -g --prune > /dev/null 2>&1; echo $?)" "2"
 is "and reports a usage error" "$("$LANE" -g --init 2>&1 | grep -c '^error:')" "1"
 
+# An external tool acts on these rows, and `repo` is only a directory name: absolute
+# paths are part of the contract, not a convenience.
+is "-g --json carries absolute paths for both repo and lane" \
+   "$("$LANE" -g --json | python3 -c 'import json,sys
+d = json.load(sys.stdin)[0]
+print(int(d["path"].startswith("/") and d["repo_path"].startswith("/") and d["path"].startswith(d["repo_path"])))')" "1"
 is "-g --json is valid JSON with the expected fields" \
    "$("$LANE" -g --json | python3 -c 'import json,sys
 d = json.load(sys.stdin)[0]
-fields = ("repo", "lane", "committed_at", "disk_estimate_bytes", "ahead", "behind", "state")
+fields = ("repo", "repo_path", "lane", "path", "committed_at", "disk_estimate_bytes", "ahead", "behind", "state")
 print(int(all(f in d for f in fields)))')" "1"
 
 echo "== 2. a bare name: warm cache arrives, tracked files from git, status clean =="

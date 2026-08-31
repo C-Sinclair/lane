@@ -94,7 +94,9 @@ worktree status; add `--json` for machine-readable output (with or without `--li
 you are standing in: `REPO`, `LANE`, `AGE` (time since the lane branch's last commit),
 `DISK`, `COMMITS` (divergence from that repository's trunk, as `+ahead -behind`), and
 `STATE`, sorted most-recently-active first. `--json` works with it too, and carries the
-commit timestamp as a raw unix time rather than the rendered `AGE` string. `-g` walks every
+commit timestamp as a raw unix time rather than the rendered `AGE` string, and absolute
+`path` and `repo_path` values, since `REPO` in the table is only a directory name and a
+reader that cannot locate a lane cannot act on one. `-g` walks every
 lane's working tree to compute `DISK`, so it is slower than a plain `lane --list` — expect it
 to take longer the more lanes you have and the larger their build caches are.
 

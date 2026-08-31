@@ -10,7 +10,11 @@ use std::time::SystemTime;
 #[derive(serde::Serialize)]
 struct GlobalRow {
     repo: String,
+    /// Absolute, because `repo` is only a directory name: without these a reader of the
+    /// JSON can name a lane but cannot act on it.
+    repo_path: String,
     lane: String,
+    path: String,
     /// Unix timestamp of the lane branch's last commit; AGE in the text table is derived
     /// from this rather than the other way around, so JSON gets the exact value.
     committed_at: i64,
@@ -124,7 +128,9 @@ fn build_row(job: &Job) -> GlobalRow {
 
     GlobalRow {
         repo: job.repo_name.to_string(),
+        repo_path: job.repo_root.to_string_lossy().into_owned(),
         lane: job.lane.name.clone(),
+        path: job.lane.path.to_string_lossy().into_owned(),
         committed_at,
         disk_estimate_bytes,
         ahead,
