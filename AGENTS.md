@@ -1,11 +1,9 @@
 # AGENTS
 
-<!-- lane:protocol -->
-## Context memory
+`lane new <name>` gives you an isolated, copy-on-write worktree under `.lane/trees/`, warm
+with the repo's ignored build caches. Work there instead of the main checkout when you want
+changes isolated from other work in flight.
 
-- Before editing a file, read `.lane/memory/<path>/` if it exists, or run `lane why <path>`.
-- Record non-obvious findings with `lane note add <path> -a <anchor> "..."`.
-- Do not edit `.lane/` by hand; landing manages it.
-- Land with `lane merge`, or `lane push` where trunk is protected, then `lane prune` once it merges.
-- Detailed workflow lives in `.agents/skills/lane/SKILL.md`; run `lane install skill` if it is absent.
-<!-- /lane:protocol -->
+When you are done with a lane, `lane rm <name>` removes it (`--force` if it holds unlanded
+work you want to discard), or `lane prune` sweeps every lane whose branch has already landed
+on trunk.

@@ -1,33 +1,33 @@
 # lane [![CI](https://github.com/lukeed/lane/actions/workflows/ci.yml/badge.svg)](https://github.com/lukeed/lane/actions/workflows/ci.yml)
 
-> Copy-on-write Git worktrees with memory that survives them.
+> Copy-on-write Git worktrees.
 
-Lane creates isolated worktrees without leaving behind the ignored build caches that make a checkout fast. It can also attach durable notes to a file or symbol, then flag them when the relevant code changes. Lane never calls a model.
+Lane creates isolated worktrees without leaving behind the ignored build caches that make a
+checkout fast. When you run `git worktree add`, it creates a clean checkout but leaves
+behind everything Git ignores: `target/`, `node_modules/`, virtual environments, generated
+files, local `.env` files. That means reinstalling and rebuilding from scratch, despite
+already having warm caches on disk.
 
-> [!TIP]
-> **Why another worktree tool?**
->
-> When you run `git worktree add`, it creates a clean checkout but leaves behind everything Git ignores: `target/`, `node_modules/`, virtual environments, generated files, and local `.env` files. This means you must reinstall and/or build from scratch, despite already having all your caches warm on disk. On a reflink filesystem, lane clones those entries by reference. The new lane starts warm while allocating new storage only for the blocks it changes.
-> 
-> Lane uses `clonefile(2)` on APFS and `FICLONE` on Linux filesystems that support it, including btrfs and XFS with reflink enabled. If reflinks are unavailable, lane creates a normal worktree and does not byte-copy ignored caches. When desired, `lane new --dirty` also carries tracked edits and untracked, non-ignored files; without reflinks, those changed files are copied normally.
->
-> Lanes live under `.lane/trees/` and are excluded through `.git/info/exclude`, so the worktrees themselves are never committed.
->
-> Lane can also attach durable notes/memories to a file or symbol, then flag them when the relevant code changes. 
->
-> Lane never calls a model.
+On a reflink filesystem, lane clones those entries by reference instead. The new lane starts
+warm, and new storage is only allocated for the blocks it changes.
+
+Lane uses `clonefile(2)` on APFS and `FICLONE` on Linux filesystems that support it,
+including btrfs and XFS with reflink enabled. If reflinks are unavailable, lane creates a
+normal worktree and does not byte-copy ignored caches. When desired, `lane new --dirty` also
+carries tracked edits and untracked, non-ignored files; without reflinks, those changed files
+are copied normally.
+
+Lanes live under `.lane/trees/` and are excluded through `.git/info/exclude`, so the
+worktrees themselves are never committed.
+
+The only state lane keeps is the commit each lane forked from, held as a ref at
+`refs/lane/<name>` and deleted with the lane. It is what separates a lane that has not
+committed yet from one whose work has fully merged — both leave the branch tip at its
+merge-base with trunk — and keeping it as a ref rather than a config value keeps that
+commit reachable, so a rewritten base cannot let gc collect it. Nothing is written to
+`.git/config`, and the refs are local: they are never pushed or fetched.
 
 ## Install
-
-Prebuilt binaries are available for macOS and Linux on arm64 and x86_64:
-
-```sh
-$ curl -fsSL https://lane.lukeed.com | sh
-```
-
-The installer writes to `~/.local/bin` by default. Set `LANE_INSTALL` to choose another directory, or `LANE_VERSION` to pin a release.
-
-You may also install with Cargo:
 
 ```sh
 $ cargo binstall --git https://github.com/lukeed/lane lane
@@ -35,106 +35,55 @@ $ cargo binstall --git https://github.com/lukeed/lane lane
 $ cargo install --git https://github.com/lukeed/lane
 ```
 
-Lane requires Rust 1.85 or newer when building from source.
+Lane requires Rust 1.85 or newer.
 
 ## Setup
 
-For each new shell, you will need to install the `lane shellenv` wrapper to automatically `cd` into & out of lanes.
-Or you may add the shell wrapper to `.zshrc` or `.bashrc` to auto-run: 
+For each new shell, install the `lane shellenv` wrapper so `lane new`, `lane enter`/`switch`,
+and `lane exit` `cd` for you. Add it to `.zshrc` or `.bashrc`:
 
 ```sh
 eval "$(lane shellenv)"
 ```
 
-> While not necessary, this more convenient than manually running `cd .lane/trees/<new lane>` repeatedly.
+> Without it, those commands still print the destination path; you just have to `cd` there
+> yourself.
 
 Then initialize each repository:
 
 ```sh
 $ cd yourrepo
 $ lane init
-$ git add .lane AGENTS.md
-$ git commit -m 'initialize lane'
 ```
 
-This creates the memory store, adds a short agent protocol to `AGENTS.md`, and reports whether the filesystem supports reflinks.
-
-Optional tooling can capture `Why:` commit trailers or install the fuller agent workflow:
-
-```sh
-$ lane install hooks  # capture targeted Why: trailers from commits
-$ lane install skill  # install the fuller workflow for coding agents
-```
+This creates `.lane/` and reports whether the filesystem supports reflinks.
 
 ## Usage
 
 ```sh
 $ lane new fix-login
-$ lane why src/auth.rs
-$ lane note add src/auth.rs -a 'fn verify' \
-    'must stay constant-time; early return leaks token length'
+$ lane enter fix-login
 
 # edit and commit as usual
-$ lane check
-$ lane merge
-# or
-$ lane push
+
+$ lane exit
+$ lane prune
 ```
 
-`lane new` creates a branch and worktree under `.lane/trees/`. On APFS, btrfs, and reflink-enabled XFS, ignored files are cloned by reference. Otherwise, Lane creates a normal Git worktree and skips ignored files.
+`lane new <name>` creates a branch and worktree under `.lane/trees/`. On APFS, btrfs, and
+reflink-enabled XFS, ignored files are cloned by reference; otherwise lane creates a normal
+Git worktree and skips them. `--base <rev>` branches from a specific ref instead of the
+default base, and `--dirty` carries uncommitted work into the new lane.
 
-Notes record what must stay true, not what a commit changed. They are stored as Markdown under `.lane/memory/` and anchored to a declaration, Markdown section, component block, or whole file.
+`lane ls` lists each lane's state (`open`, `pushed`, or `landed`) and worktree status; add
+`--json` for machine-readable output.
 
-For repositories with protected branches, use `lane push` instead of `lane merge`. After the pull request lands, run `lane prune`.
+`lane rm <name>` removes a lane's branch and worktree, refusing if it would discard
+uncommitted work or commits trunk does not have. `--force` discards it anyway.
 
-Run `lane --help` for the command list, or visit the [usage guide](https://lane.lukeed.com/usage) for the full workflow. See [Audit](#audit) for how to review existing memories before landing.
-
-## Memory
-
-Memory is ordinary Markdown committed with the repository:
-
-```text
-.lane/
-  memory/<path>/<ulid>-<slug>.md   live notes and confirmed fingerprints
-  attic/<path>/<ulid>-<slug>.md    retired notes, still recoverable
-  trees/<name>/                    local worktrees, never committed
-```
-
-New notes use distinct files, so parallel lanes can annotate the same code without editing the same bytes. `lane note confirm <id>` re-vouches for a drifted note by updating its confirmed fingerprint. Pin and unpin likewise update retention metadata. If two branches make conflicting judgments about the same note, Git makes that disagreement visible.
-
-Notes are written directly to `.lane/memory/` without a baseline. The next audit baselines them after any rebase, follows source-file renames, and moves superseded, unpinned missing, or unpinned over-budget notes to `.lane/attic/` rather than deleting them.
-
-Anchors include declarations such as `fn verify`, Markdown headings such as `## Rate limiting`, component blocks such as `#script`, and `@file` for a whole file. Run `lane anchors src/auth.rs` to list the canonical values and their line ranges. A unique bare name such as `verify` is stored as its canonical value; a name shared by multiple declaration kinds is refused with the available choices. Comments and whitespace are normalized out of fingerprints.
-
-### Audit
-
-Run `lane check` to get the status report for existing memories:
-
-```sh
-$ lane check
-```
-
-Freshness is computed for the anchored span, not the whole file:
-
-| result | meaning |
-|---|---|
-| `fresh` | the anchored span is unchanged |
-| `content-changed` | its implementation changed |
-| `contract-changed` | its declaration changed |
-| `anchor-missing` | the symbol no longer resolves |
-| `unverifiable` | lane has no grammar for that anchor |
-
-Resolve drift with exactly one of these actions:
-
-```sh
-$ lane note confirm <id>                  # still true
-$ lane note replace <id> '<replacement>'  # needs an update
-$ lane note retire <id>                   # no longer applies
-```
-
-Run `lane note edit <id>` for a guided terminal menu over the same actions, including pinning or unpinning the note.
-
-Replacement inherits the live note's path and anchor. Retire and restore move bytes unchanged between live memory and the attic; pin and unpin control eviction. For a new note, supplied text never prompts and defaults to `@file` without `-a`; omit text to use the interactive anchor selector and one-line prompt.
+`lane prune` removes every lane whose branch has landed — its remote retired, or its commits
+already contained in trunk — leaving open lanes and anything committed after landing alone.
+Add `--dry-run` to see what it would remove without removing anything.
 
 ## Development
 
@@ -145,7 +94,7 @@ $ cargo clippy --workspace --all-targets -- -D warnings
 $ cargo test --workspace
 $ ./scripts/test.sh           # end to end against temporary Git repositories
 $ ./scripts/check-linux.sh    # run the same gates without reflink support
-$ ./scripts/release.ts patch  # bump the version, then tag and push the release
+$ ./scripts/bench.sh          # time `lane new`/`lane rm` against a synthetic repository
 ```
 
 ## License

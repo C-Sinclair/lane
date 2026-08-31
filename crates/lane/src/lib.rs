@@ -1,13 +1,6 @@
 pub mod args;
-pub mod audit;
-pub mod capture;
 pub mod cli;
 pub mod cow;
 pub mod git;
 pub mod help;
-pub mod note;
-pub(crate) mod prompt;
-pub mod store;
-pub mod syntax;
-pub mod util;
 pub mod worktree;

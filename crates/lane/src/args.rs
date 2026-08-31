@@ -4,8 +4,8 @@
 //! [`parse`] is pure and takes the argument list explicitly, so a test drives it
 //! without a process. `-h`/`--help` anywhere in a command's arguments wins over
 //! the rest of them, and a bare `lane` prints the root screen. Words after `--`
-//! are positional whatever they look like, which is what lets a note's text
-//! start with a dash.
+//! are positional whatever they look like, which is what lets a name start with
+//! a dash.
 
 use crate::help::Help;
 use anyhow::Result;
@@ -13,120 +13,16 @@ use std::ffi::OsString;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const MAX_NOTES: usize = 5;
-const MAX_CHARS: usize = 1200;
-
 /// Every command that appears in help, for the typo suggestion.
 const COMMANDS: &[&str] = &[
-    "init",
-    "new",
-    "enter",
-    "switch",
-    "exit",
-    "ls",
-    "anchors",
-    "note",
-    "install",
-    "uninstall",
-    "why",
-    "check",
-    "audit",
-    "merge",
-    "push",
-    "prune",
-    "rm",
-    "shellenv",
+    "init", "new", "enter", "switch", "exit", "ls", "prune", "rm", "shellenv",
 ];
-
-const NOTE_COMMANDS: &[&str] = &[
-    "add", "edit", "replace", "confirm", "retire", "restore", "pin", "unpin",
-];
-
-/// How much memory one `(path, anchor)` may keep. Shared by `audit` and `merge`,
-/// which is why it is a type rather than two pairs of fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Budget {
-    pub max_notes: usize,
-    pub max_chars: usize,
-}
-
-impl Default for Budget {
-    fn default() -> Self {
-        Self {
-            max_notes: MAX_NOTES,
-            max_chars: MAX_CHARS,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Installable {
-    Hooks,
-    Skill,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewArgs {
     pub name: String,
     pub base: Option<String>,
     pub dirty: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoteAddArgs {
-    pub path: String,
-    pub text: Option<String>,
-    pub anchor: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoteReplaceArgs {
-    pub id: String,
-    pub text: Option<String>,
-    pub path: Option<String>,
-    pub anchor: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NoteCommand {
-    Add(NoteAddArgs),
-    Edit { id: String },
-    Replace(NoteReplaceArgs),
-    Confirm { id: String },
-    Retire { id: String },
-    Restore { id: String },
-    Pin { id: String },
-    Unpin { id: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WhyArgs {
-    pub path: Option<String>,
-    pub anchor: Option<String>,
-    pub json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuditArgs {
-    pub base: String,
-    pub budget: Budget,
-    pub json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MergeArgs {
-    pub name: Option<String>,
-    pub base: Option<String>,
-    pub keep: bool,
-    pub squash: bool,
-    pub budget: Budget,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PushArgs {
-    pub name: Option<String>,
-    pub base: Option<String>,
-    pub budget: Budget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,16 +40,6 @@ pub enum Parsed {
     Ls { json: bool },
     Enter { name: String },
     Exit,
-    Anchors { path: String, json: bool },
-    Note(NoteCommand),
-    Install(Installable),
-    Uninstall(Installable),
-    Capture { rev: String },
-    Why(WhyArgs),
-    Check { json: bool },
-    Audit(AuditArgs),
-    Merge(MergeArgs),
-    Push(PushArgs),
     Prune { dry_run: bool },
     Rm(RmArgs),
     Shellenv,
@@ -165,9 +51,9 @@ pub enum Parsed {
 ///
 /// # Example
 /// ```
-/// use lane::args::{Installable, Parsed, parse};
-/// let parsed = parse(vec!["install".into(), "skill".into()]).unwrap();
-/// assert_eq!(parsed, Parsed::Install(Installable::Skill));
+/// use lane::args::{Parsed, parse};
+/// let parsed = parse(vec!["exit".into()]).unwrap();
+/// assert_eq!(parsed, Parsed::Exit);
 /// ```
 pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let head = raw.first().and_then(|a| a.to_str()).map(str::to_owned);
@@ -179,16 +65,6 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
             Parsed::Enter { name }
         }),
         Some("exit") => bare(rest(raw), Help::Exit, Parsed::Exit),
-        Some("anchors") => parse_anchors(rest(raw)),
-        Some("note") => parse_note(rest(raw)),
-        Some("install") => parse_installable(rest(raw), Help::Install, Parsed::Install),
-        Some("uninstall") => parse_installable(rest(raw), Help::Uninstall, Parsed::Uninstall),
-        Some("capture") => parse_capture(rest(raw)),
-        Some("why") => parse_why(rest(raw)),
-        Some("check") => parse_check(rest(raw)),
-        Some("audit") => parse_audit(rest(raw)),
-        Some("merge") => parse_merge(rest(raw)),
-        Some("push") => parse_push(rest(raw)),
         Some("prune") => parse_prune(rest(raw)),
         Some("rm") => parse_rm(rest(raw)),
         Some("shellenv") => bare(rest(raw), Help::Shellenv, Parsed::Shellenv),
@@ -248,31 +124,6 @@ fn one(got: Vec<String>, name: &str, help: Help) -> Result<String> {
     }
 }
 
-fn at_most_one(got: Vec<String>, help: Help) -> Result<Option<String>> {
-    let mut got = got.into_iter();
-    let first = got.next();
-    match got.next() {
-        Some(extra) => Err(unexpected(&extra, help)),
-        None => Ok(first),
-    }
-}
-
-fn required_optional(
-    got: Vec<String>,
-    required: &str,
-    help: Help,
-) -> Result<(String, Option<String>)> {
-    let mut got = got.into_iter();
-    let Some(first) = got.next() else {
-        return Err(missing(&[required], help));
-    };
-    let second = got.next();
-    match got.next() {
-        Some(extra) => Err(unexpected(&extra, help)),
-        None => Ok((first, second)),
-    }
-}
-
 fn none(got: Vec<String>, help: Help) -> Result<()> {
     match got.into_iter().next() {
         Some(extra) => Err(unexpected(&extra, help)),
@@ -327,198 +178,6 @@ fn parse_ls(raw: Vec<OsString>) -> Result<Parsed> {
     Ok(Parsed::Ls { json })
 }
 
-fn parse_anchors(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::Anchors));
-    }
-    let json = pargs.contains("--json");
-    let path = one(
-        positionals(pargs, after, Help::Anchors)?,
-        "<PATH>",
-        Help::Anchors,
-    )?;
-    Ok(Parsed::Anchors { path, json })
-}
-
-fn parse_note(raw: Vec<OsString>) -> Result<Parsed> {
-    let head = raw.first().and_then(|a| a.to_str()).map(str::to_owned);
-    match head.as_deref() {
-        Some("add") => parse_note_add(rest(raw)),
-        Some("edit") => parse_note_id(rest(raw), Help::NoteEdit, |id| NoteCommand::Edit { id }),
-        Some("replace") => parse_note_replace(rest(raw)),
-        Some("confirm") => parse_note_id(rest(raw), Help::NoteConfirm, |id| NoteCommand::Confirm {
-            id,
-        }),
-        Some("retire") => {
-            parse_note_id(rest(raw), Help::NoteRetire, |id| NoteCommand::Retire { id })
-        }
-        Some("restore") => parse_note_id(rest(raw), Help::NoteRestore, |id| NoteCommand::Restore {
-            id,
-        }),
-        Some("pin") => parse_note_id(rest(raw), Help::NotePin, |id| NoteCommand::Pin { id }),
-        Some("unpin") => parse_note_id(rest(raw), Help::NoteUnpin, |id| NoteCommand::Unpin { id }),
-        Some("-h" | "--help") => Ok(Parsed::Help(Help::Note)),
-        None => Err(missing(&["<COMMAND>"], Help::Note)),
-        Some(other) if other.starts_with('-') => Err(unexpected(other, Help::Note)),
-        Some(other) => Err(unrecognized_note(other)),
-    }
-}
-
-fn parse_note_add(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::NoteAdd));
-    }
-    let anchor = pargs.opt_value_from_str(["-a", "--anchor"])?;
-    let (path, text) = required_optional(
-        positionals(pargs, after, Help::NoteAdd)?,
-        "<PATH>",
-        Help::NoteAdd,
-    )?;
-    Ok(Parsed::Note(NoteCommand::Add(NoteAddArgs {
-        path,
-        text,
-        anchor,
-    })))
-}
-
-fn parse_note_replace(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::NoteReplace));
-    }
-    let path = pargs.opt_value_from_str(["-p", "--path"])?;
-    let anchor = pargs.opt_value_from_str(["-a", "--anchor"])?;
-    let (id, text) = required_optional(
-        positionals(pargs, after, Help::NoteReplace)?,
-        "<ID>",
-        Help::NoteReplace,
-    )?;
-    Ok(Parsed::Note(NoteCommand::Replace(NoteReplaceArgs {
-        id,
-        text,
-        path,
-        anchor,
-    })))
-}
-
-fn parse_note_id(
-    raw: Vec<OsString>,
-    help: Help,
-    build: fn(String) -> NoteCommand,
-) -> Result<Parsed> {
-    parse_one(raw, help, "<ID>", |id| Parsed::Note(build(id)))
-}
-
-fn parse_installable(
-    raw: Vec<OsString>,
-    help: Help,
-    build: fn(Installable) -> Parsed,
-) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(help));
-    }
-    let what = one(positionals(pargs, after, help)?, "<hooks|skill>", help)?;
-    match what.as_str() {
-        "hooks" => Ok(build(Installable::Hooks)),
-        "skill" => Ok(build(Installable::Skill)),
-        other => Err(anyhow::anyhow!(
-            "unrecognized integration '{other}'{}\n\n\
-             Usage: {}\n\nFor more information, try '{} --help'.",
-            help.tip(),
-            help.usage(),
-            help.invocation()
-        )),
-    }
-}
-
-/// The commit-message hook's own entry point. Hidden: it is called by a hook,
-/// never typed, so it has no help screen to point a reader at.
-fn parse_capture(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let pargs = pico_args::Arguments::from_vec(flags);
-    let rev = one(positionals(pargs, after, Help::Root)?, "<REV>", Help::Root)?;
-    Ok(Parsed::Capture { rev })
-}
-
-fn parse_why(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::Why));
-    }
-    let anchor = pargs.opt_value_from_str(["-a", "--anchor"])?;
-    let json = pargs.contains("--json");
-    let path = at_most_one(positionals(pargs, after, Help::Why)?, Help::Why)?;
-    Ok(Parsed::Why(WhyArgs { path, anchor, json }))
-}
-
-fn parse_check(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::Check));
-    }
-    let json = pargs.contains("--json");
-    none(positionals(pargs, after, Help::Check)?, Help::Check)?;
-    Ok(Parsed::Check { json })
-}
-
-fn parse_audit(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::Audit));
-    }
-    let base: Option<String> = pargs.opt_value_from_str("--base")?;
-    let budget = budget(&mut pargs)?;
-    let json = pargs.contains("--json");
-    none(positionals(pargs, after, Help::Audit)?, Help::Audit)?;
-    Ok(Parsed::Audit(AuditArgs {
-        base: base.unwrap_or_default(),
-        budget,
-        json,
-    }))
-}
-
-fn parse_merge(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::Merge));
-    }
-    let base = pargs.opt_value_from_str("--base")?;
-    let keep = pargs.contains("--keep");
-    let squash = pargs.contains("--squash");
-    let budget = budget(&mut pargs)?;
-    let name = at_most_one(positionals(pargs, after, Help::Merge)?, Help::Merge)?;
-    Ok(Parsed::Merge(MergeArgs {
-        name,
-        base,
-        keep,
-        squash,
-        budget,
-    }))
-}
-
-fn parse_push(raw: Vec<OsString>) -> Result<Parsed> {
-    let (flags, after) = terminated(raw);
-    let mut pargs = pico_args::Arguments::from_vec(flags);
-    if pargs.contains(["-h", "--help"]) {
-        return Ok(Parsed::Help(Help::Push));
-    }
-    let base = pargs.opt_value_from_str("--base")?;
-    let budget = budget(&mut pargs)?;
-    let name = at_most_one(positionals(pargs, after, Help::Push)?, Help::Push)?;
-    Ok(Parsed::Push(PushArgs { name, base, budget }))
-}
-
 fn parse_prune(raw: Vec<OsString>) -> Result<Parsed> {
     let (flags, after) = terminated(raw);
     let mut pargs = pico_args::Arguments::from_vec(flags);
@@ -541,22 +200,9 @@ fn parse_rm(raw: Vec<OsString>) -> Result<Parsed> {
     Ok(Parsed::Rm(RmArgs { name, force }))
 }
 
-/// The budget flags `audit` and `merge` share.
-fn budget(pargs: &mut pico_args::Arguments) -> Result<Budget> {
-    let default = Budget::default();
-    Ok(Budget {
-        max_notes: pargs
-            .opt_value_from_str("--max-notes")?
-            .unwrap_or(default.max_notes),
-        max_chars: pargs
-            .opt_value_from_str("--max-chars")?
-            .unwrap_or(default.max_chars),
-    })
-}
-
 fn unexpected(token: &str, help: Help) -> anyhow::Error {
-    // A word that only looks like a flag — a note's text, a branch named `-x` —
-    // has somewhere to go, and the reader is told where rather than left to guess.
+    // A word that only looks like a flag — a branch named `-x` — has somewhere
+    // to go, and the reader is told where rather than left to guess.
     let tip = match token.starts_with('-') {
         true => format!("\n\n  tip: to pass '{token}' as a value, use '-- {token}'"),
         false => String::new(),
@@ -591,18 +237,6 @@ fn unrecognized(typed: &str) -> anyhow::Error {
         "unrecognized subcommand '{typed}'{tip}\n\nUsage: {}\n\nFor more information, try '{} --help'.",
         Help::Root.usage(),
         Help::Root.invocation()
-    )
-}
-
-fn unrecognized_note(typed: &str) -> anyhow::Error {
-    let tip = match nearest(typed, NOTE_COMMANDS) {
-        Some(name) => format!("\n\n  tip: a similar note command exists: '{name}'"),
-        None => String::new(),
-    };
-    anyhow::anyhow!(
-        "unrecognized note command '{typed}'{tip}\n\nUsage: {}\n\nFor more information, try '{} --help'.",
-        Help::Note.usage(),
-        Help::Note.invocation()
     )
 }
 

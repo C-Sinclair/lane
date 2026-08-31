@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+pub const LANE_DIR: &str = ".lane";
 const TREES_DIRNAME: &str = "trees";
 const TREES_PATH: &str = ".lane/trees";
 
@@ -59,23 +60,47 @@ fn new_base(root: &Path) -> String {
     }
 }
 
-pub fn lane_base(root: &Path, branch: &str) -> String {
-    let key = format!("lane.{branch}.base");
-    let base = try_git(&["config", "--get", &key], Some(root));
-    if !base.is_empty() && git_ok(&["rev-parse", "--verify", "--quiet", &base], Some(root)) {
-        return base;
-    }
-    trunk_name(root)
+/// Where a lane's fork commit is kept.
+///
+/// A ref, not a config string, so the commit stays reachable: a config value naming a
+/// commit is opaque to git, and a base branch that is later reset or rewritten leaves that
+/// commit collectable, taking the marker with it at the next gc.
+///
+/// Lane names are branch names, so this namespace inherits git's own rule that `a` and
+/// `a/b` cannot both be branches — the directory/file collision is already impossible.
+fn fork_ref(branch: &str) -> String {
+    format!("refs/lane/{branch}")
 }
 
-fn record_base(root: &Path, branch: &str, base: &str) -> Result<()> {
-    let key = format!("lane.{branch}.base");
-    git(&["config", "--local", &key, base], Some(root))?;
+/// The commit a lane forked from, recorded once at creation.
+///
+/// Refs alone cannot separate a lane that never committed from one whose work has fully
+/// merged: both leave the branch tip at its merge-base with trunk. This is what tells them
+/// apart, and without it `prune` would collect a lane the moment it was created.
+fn record_fork(root: &Path, branch: &str, base: &str) -> Result<()> {
+    // Peeled: a tag as base would otherwise record the tag object, which matches no tip.
+    let sha = try_git(&["rev-parse", &format!("{base}^{{commit}}")], Some(root));
+    if sha.is_empty() {
+        return Ok(());
+    }
+    git(&["update-ref", &fork_ref(branch), &sha], Some(root))?;
     Ok(())
 }
 
+fn forget_fork(root: &Path, branch: &str) {
+    try_git(&["update-ref", "-d", &fork_ref(branch)], Some(root));
+}
+
+fn fork_point(root: &Path, branch: &str) -> Option<String> {
+    let sha = try_git(
+        &["rev-parse", "--verify", "--quiet", &fork_ref(branch)],
+        Some(root),
+    );
+    (!sha.is_empty()).then_some(sha)
+}
+
 pub fn lanes_dir(root: &Path) -> PathBuf {
-    root.join(crate::store::LANE_DIR).join(TREES_DIRNAME)
+    root.join(LANE_DIR).join(TREES_DIRNAME)
 }
 
 /// Tracked changes only: untracked files do not block a rebase.
@@ -399,10 +424,7 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
         }
     };
 
-    crate::store::stamp_lane_id(&dest)?;
-    if !adopt {
-        record_base(&root, name, &base)?;
-    }
+    record_fork(&root, name, &base)?;
 
     Ok(Created {
         path: dest,
@@ -469,7 +491,7 @@ pub fn registered(root: &Path, dest: &Path) -> bool {
 /// What removing this lane destroys for good. Empty means nothing is at stake.
 ///
 /// Every caller of `remove` asks this first. `git branch -d` is the weaker question: it
-/// refuses every squash and rebase merge, and knows nothing about the memory a lane holds.
+/// refuses every squash and rebase merge.
 pub fn losses(root: &Path, path: &Path, branch: &str, trunk: &str) -> Vec<String> {
     let mut out = Vec::new();
     if path.is_dir() {
@@ -477,15 +499,9 @@ pub fn losses(root: &Path, path: &Path, branch: &str, trunk: &str) -> Vec<String
         let changed = try_git(&["status", "--porcelain"], Some(path))
             .lines()
             .filter(|line| !line.trim().is_empty())
-            // Notes have their own line below; counting them here names one file twice.
-            .filter(|line| !line.contains(".lane/memory"))
             .count();
         if changed > 0 {
             out.push(format!("{changed} uncommitted change(s)"));
-        }
-        let pending = crate::store::pending_count(path);
-        if pending > 0 {
-            out.push(format!("{pending} pending note(s)"));
         }
     }
     let refname = format!("refs/heads/{branch}");
@@ -493,35 +509,11 @@ pub fn losses(root: &Path, path: &Path, branch: &str, trunk: &str) -> Vec<String
         return out;
     }
 
-    let after = crate::store::landed_tip(path).map(|tip| {
-        try_git(
-            &["rev-list", "--count", &format!("{tip}..{branch}")],
-            Some(root),
-        )
-        .parse::<u32>()
-        .unwrap_or(0)
-    });
-
-    // A retired upstream proves arrival and a recorded tip dates it. Together they answer
-    // without a patch comparison; missing either one, the probe is still the only witness.
-    let gone = upstream_gone(root, branch);
-    let landed = match (gone, after) {
-        (true, Some(_)) => true,
-        _ => contained_in(root, trunk, branch),
-    };
-
-    if !landed {
-        if gone {
-            // It arrived, and no tip dates it, so what sits on top is unknown rather than
-            // absent. Saying trunk lacks the work would be false.
-            out.push("landed, later commits unknown".into());
-        } else {
-            // No count: a squash merge leaves commits whose patches landed inside one of
-            // trunk's, so `rev-list` would name a number larger than what is really at risk.
-            out.push(format!("commits {trunk} does not have"));
-        }
-    } else if let Some(count) = after.filter(|count| *count > 0) {
-        out.push(format!("{count} commit(s) after landing"));
+    // A lane that never committed has no commits to lose, landed or not.
+    if started(root, branch) && !landed(root, trunk, branch) {
+        // No count: a squash merge leaves commits whose patches landed inside one of
+        // trunk's, so `rev-list` would name a number larger than what is really at risk.
+        out.push(format!("commits {trunk} does not have"));
     }
     out
 }
@@ -570,6 +562,7 @@ pub fn remove(name: &str) -> Result<()> {
     if branch {
         git(&["branch", "-D", name], Some(&root))?;
     }
+    forget_fork(&root, name);
     if dest.exists() {
         let _ = std::fs::remove_dir_all(&dest);
     }
@@ -651,6 +644,32 @@ pub fn upstream_gone(root: &Path, branch: &str) -> bool {
     )
     .trim()
         == "[gone]"
+}
+
+/// Whether a lane's work has reached trunk.
+///
+/// No landing markers exist; git refs are the only witness. A retired upstream and
+/// containment in trunk are two different proofs of arrival, either one sufficient.
+///
+/// A lane that has committed nothing is excluded first. Its tip is trunk's, so containment
+/// holds vacuously, and calling that "landed" would let `prune` delete a lane the moment it
+/// was created.
+pub fn landed(root: &Path, trunk: &str, branch: &str) -> bool {
+    if !started(root, branch) {
+        return false;
+    }
+    upstream_gone(root, branch) || contained_in(root, trunk, branch)
+}
+
+/// Whether a branch holds any commit of its own beyond where it forked.
+///
+/// An unrecorded fork answers yes: a lane this tool did not create is judged on its refs
+/// alone, where leaving it uncollectable forever is the worse of the two failures.
+fn started(root: &Path, branch: &str) -> bool {
+    let Some(fork) = fork_point(root, branch) else {
+        return true;
+    };
+    try_git(&["rev-parse", branch], Some(root)) != fork
 }
 
 pub fn contained_in(root: &Path, trunk: &str, branch: &str) -> bool {
