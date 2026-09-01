@@ -22,3 +22,4 @@ gotchas worth remembering on their own, with nothing else to link.
 | [FR-007](FR-007-the-tree-walk-was-not-the-bottleneck.md) | The tree walk looked like `-g`'s bottleneck, and wasn't | [ADR-013](../decisions/adr-013-cache-the-whole-global-row-set.md) |
 | [FR-008](FR-008-ignored-entries-collapse-above-the-lanes-directory.md) | Ignored entries collapse above the lanes directory; lanes cloned each other | [DD-001](../design/dd-001-cow-clone.md), [DD-002](../design/dd-002-worktree-lifecycle.md) |
 | [FR-009](FR-009-every-worktree-looked-like-a-lane.md) | Every worktree looked like a lane; `--prune` would have deleted them | [ADR-015](../decisions/adr-015-lane-membership-is-by-location.md) |
+| [FR-010](FR-010-making-a-json-field-optional-broke-a-consumer.md) | Making a `--json` field optional broke a consumer instantly and silently | Rollout practice; no design change |
