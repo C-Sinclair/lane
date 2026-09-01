@@ -29,3 +29,4 @@ try, and why it stopped.
 | [ADR-012](adr-012-interactive-tour-as-separate-binary.md) | Interactive tour as a separate binary | superseded by ADR-001 | A teaching aid shipped as its own crate, with a hard boundary against affecting the real binary. |
 | [ADR-013](adr-013-cache-the-whole-global-row-set.md) | Cache the whole `-g` row set, not just the disk estimate | accepted | Measured the tree walk as nearly free warm; git subprocess spawns dominate, so the cache covers the whole row. |
 | [ADR-014](adr-014-a-lane-name-adopts-a-matching-upstream-branch.md) | A lane name adopts a matching upstream branch | accepted | A name matching exactly one remote-tracking branch branches from it and tracks it; two matches is an error. |
+| [ADR-015](adr-015-lane-membership-is-by-location.md) | Lane membership is by location | accepted | A lane is a worktree under `.lane/trees/`; foreign worktrees are not lanes and `--prune` cannot touch them. |

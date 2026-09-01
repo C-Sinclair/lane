@@ -190,12 +190,21 @@ fn build_row(job: &Job) -> GlobalRow {
 pub(crate) fn disk_estimate(lane: &Path, main_root: &Path) -> u64 {
     // An empty relative path is the walk's own root, which `filter_entry` also visits:
     // skipping it there prunes the entire walk rather than one entry.
-    let skip = |rel: &Path| rel.starts_with(".git") || rel.starts_with(".lane/trees");
+    let skip = |rel: &Path| rel.starts_with(".git") || rel.starts_with(".lane");
+    // A directory holding a `.git` entry is another checkout, and none of its storage is
+    // this lane's. Costs one stat per directory and saves walking whole nested working
+    // trees — a lane created before those stopped being cloned holds 700k such files, all
+    // of which match the original by size and mtime and so contribute nothing to the sum.
+    let nested_checkout = |entry: &walkdir::DirEntry, rel: &Path| {
+        entry.file_type().is_dir()
+            && !rel.as_os_str().is_empty()
+            && entry.path().join(".git").exists()
+    };
     walkdir::WalkDir::new(lane)
         .into_iter()
         .filter_entry(|entry| {
             let rel = entry.path().strip_prefix(lane).unwrap_or(entry.path());
-            !skip(rel)
+            !skip(rel) && !nested_checkout(entry, rel)
         })
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
@@ -381,6 +390,14 @@ mod tests {
         // A nested lane's own tree is never walked into.
         std::fs::create_dir_all(lane.join(".lane/trees/inner")).unwrap();
         std::fs::write(lane.join(".lane/trees/inner/huge.bin"), vec![0u8; 9999]).unwrap();
+        assert_eq!(disk_estimate(&lane, &main_root), 2048 + 5000);
+
+        // Any nested checkout is another tree's storage, not this lane's. A lane created
+        // before those stopped being cloned holds hundreds of thousands of such files, and
+        // walking them cost 20 s of `-g` to add nothing to the sum.
+        std::fs::create_dir_all(lane.join(".wt/side")).unwrap();
+        std::fs::write(lane.join(".wt/side/.git"), "gitdir: elsewhere").unwrap();
+        std::fs::write(lane.join(".wt/side/huge.bin"), vec![0u8; 8888]).unwrap();
         assert_eq!(disk_estimate(&lane, &main_root), 2048 + 5000);
     }
 

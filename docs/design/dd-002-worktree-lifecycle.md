@@ -46,10 +46,23 @@ local and never committed, matching the fact that lanes are a local, per-machine
 `--base` and `--dirty` only apply at creation; re-running `lane <name>` against an existing
 lane just enters it.
 
+## What counts as a lane
+
+A lane is a worktree under `.lane/trees/` — the same rule `create` uses to decide where to
+put one. A repository routinely holds worktrees lane did not create (`git-wt`'s `.wt/`, an
+agent's `.claude/worktrees/`, a hand-made `git worktree add`), and those are not lanes:
+listing them misreports them, and `--prune` would delete them and their branches
+([ADR-015](../decisions/adr-015-lane-membership-is-by-location.md)). `list_lanes` applies
+the rule once and every command reading it inherits it.
+
+Paths are compared canonically, since git reports `/private/...` on macOS where the
+repository root keeps the shorter spelling.
+
 ## Listing
 
 `lane` with no operation flag (or `-l`/`--list`) lists every lane from
-`git worktree list --porcelain`, filtered to exclude the primary worktree. Each row reports:
+`git worktree list --porcelain`, minus the primary worktree and anything the membership rule
+above rejects. Each row reports:
 
 - **state** — `open`, `pushed`, or `landed` (DD-003 covers how this is decided)
 - **dirty** — computed in parallel across lanes via a scoped thread per lane, since

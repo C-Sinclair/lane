@@ -61,3 +61,11 @@ lane membership, a 120-second TTL for the derived columns. `--refresh` (valid on
 `-g`, enforced the same way `--dry-run` is pinned to `--prune`) bypasses the TTL and rewrites
 the cache. `-g --json` is byte-identical whether the rows came from the cache or were just
 computed — the cache stores the exact row shape lane prints, not a coarser summary of it.
+
+The cost of a cache *miss* still matters, because the TTL guarantees one every 120 seconds
+and a picker opened after that pays it in full. Two things dominated it, both fixed in
+[FR-009](../friction/FR-009-every-worktree-looked-like-a-lane.md): foreign worktrees counted
+as lanes (see DD-002's membership rule), and `disk_estimate` walking nested checkouts inside
+a lane. The DISK estimate now prunes any directory holding a `.git` entry — another
+checkout's storage is never the lane's, and a stat per directory buys skipping the whole
+tree beneath it. A cold `-g` over two repositories went from 22.7 s to 2.04 s.

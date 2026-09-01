@@ -226,10 +226,36 @@ pub struct Lane {
 /// A lane's name is its path below `.lane/trees/`, not the last segment of it: a lane on
 /// `feat/login` lives two directories deep, and `login` alone addresses nothing.
 pub(crate) fn name_of(root: &Path, path: &Path) -> String {
-    path.strip_prefix(lanes_dir(root))
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    let dir = lanes_dir(root);
+    if let Ok(rel) = path.strip_prefix(&dir) {
+        return rel.to_string_lossy().to_string();
+    }
+    // The two spellings can differ (`/private` on macOS); strip canonically before giving
+    // up, or the name falls back to an absolute path that addresses nothing.
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (full, dir) = (canonical(path), canonical(&dir));
+    match full.strip_prefix(&dir) {
+        Ok(rel) => rel.to_string_lossy().to_string(),
+        Err(_) => path.to_string_lossy().to_string(),
+    }
+}
+
+/// Whether a worktree path is a lane, i.e. lives under `.lane/trees/`.
+///
+/// A repository can hold worktrees lane did not create — `git worktree add` by hand,
+/// `git-wt`'s `.wt/`, an agent's `.claude/worktrees/`. Those are someone else's checkouts:
+/// listing them misreports them as lanes, and `--prune` would delete them and their
+/// branches. Membership is by location, the same rule that decides where `create` puts one.
+///
+/// Compared canonically: git reports `/private/...` on macOS where the repository root
+/// retains the shorter spelling, and a mismatch there would hide every real lane.
+fn is_lane(root: &Path, path: &Path) -> bool {
+    let dir = lanes_dir(root);
+    if path.starts_with(&dir) {
+        return true;
+    }
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    canonical(path).starts_with(canonical(&dir))
 }
 
 pub fn list_lanes(root: &Path) -> Vec<Lane> {
@@ -238,7 +264,8 @@ pub fn list_lanes(root: &Path) -> Vec<Lane> {
     let (mut path, mut branch) = (String::new(), String::new());
 
     let flush = |path: &mut String, branch: &mut String, lanes: &mut Vec<Lane>| {
-        if !path.is_empty() && Path::new(path.as_str()) != root {
+        let candidate = Path::new(path.as_str());
+        if !path.is_empty() && candidate != root && is_lane(root, candidate) {
             let path_buf = PathBuf::from(path.as_str());
             lanes.push(Lane {
                 name: name_of(root, &path_buf),

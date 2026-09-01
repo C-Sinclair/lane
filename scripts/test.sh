@@ -593,6 +593,29 @@ is "the real cache still was" \
 is "and a sibling lane is not cloned into the next one" \
    "$([ -e .lane/trees/second/.lane/trees/isolated ] && echo yes || echo no)" "no"
 
+echo "== 20. worktrees lane did not create are not lanes =="
+setup
+printf 'node_modules/\n.wt/\n' > .gitignore
+git add -A && git commit -qm "ignore .wt"
+# A foreign worktree, on a branch already merged into trunk: exactly what --prune collects.
+git worktree add -q -b foreign .wt/foreign
+git -C .wt/foreign commit -q --allow-empty -m "foreign work"
+git merge -q --no-edit foreign
+"$LANE" mine > /dev/null 2>&1
+is "--list shows only the lane" "$("$LANE" --list | wc -l | tr -d ' ')" "1"
+is "and names it, not its path" "$("$LANE" --list | awk '{print $1}')" "mine"
+is "-g counts only the lane" \
+   "$("$LANE" -g --refresh --json | grep -c '"lane": "mine"')" "1"
+is "-g does not list the foreign worktree" \
+   "$("$LANE" -g --refresh --json | grep -c 'foreign')" "0"
+is "--prune leaves the foreign worktree alone" \
+   "$("$LANE" --prune --dry-run 2>&1 | grep -c foreign)" "0"
+"$LANE" --prune > /dev/null 2>&1
+is "and it is still checked out afterwards" \
+   "$([ -f .wt/foreign/src/auth.rs ] && echo yes || echo no)" "yes"
+is "with its branch intact" \
+   "$(git rev-parse --verify --quiet refs/heads/foreign > /dev/null; echo $?)" "0"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
