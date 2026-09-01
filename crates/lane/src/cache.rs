@@ -82,7 +82,7 @@ mod tests {
             lane: lane.into(),
             path: format!("/repo/.lane/trees/{lane}"),
             committed_at: 1000,
-            disk_estimate_bytes: 4096,
+            disk_estimate_bytes: Some(4096),
             ahead: 1,
             behind: 0,
             state: "open".into(),

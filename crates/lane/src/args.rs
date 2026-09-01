@@ -48,6 +48,7 @@ pub enum Parsed {
         json: bool,
         global: bool,
         refresh: bool,
+        disk: bool,
     },
     Open(OpenArgs),
     Delete(DeleteArgs),
@@ -148,6 +149,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let base: Option<String> = pargs.opt_value_from_str(["-b", "--base"])?;
     let dirty = pargs.contains("--dirty");
     let refresh = pargs.contains("--refresh");
+    let disk = pargs.contains("--disk");
 
     let positionals = positionals(pargs, after, Help::Root)?;
 
@@ -226,6 +228,12 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     if refresh && !global {
         return Err(misplaced("--refresh", Help::Root));
     }
+    // `--disk` opts into the tree walk behind the DISK column, which is the whole of a cold
+    // `-g`'s cost. Pinned to `-g` for the same reason `--refresh` is: it names what that one
+    // listing computes, and means nothing anywhere else.
+    if disk && !global {
+        return Err(misplaced("--disk", Help::Root));
+    }
 
     let parsed = match selected {
         Selected::Delete | Selected::ForceDelete => {
@@ -272,6 +280,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
                 json,
                 global,
                 refresh,
+                disk,
             }
         }
         Selected::Open => {

@@ -11,7 +11,7 @@ The complete command grammar, and why every bare word is a lane name.
 lane                                        list lanes
 lane <name> [-b|--base <rev>] [--dirty]     enter a lane, or create it
 lane -d|-D <name>...                        delete
-lane -g|--global [--refresh]                list lanes across every repository
+lane -g|--global [--refresh] [--disk]       list lanes across every repository
 lane --prune [--dry-run]
 lane --init
 lane --exit
@@ -63,9 +63,20 @@ the cache. `-g --json` is byte-identical whether the rows came from the cache or
 computed — the cache stores the exact row shape lane prints, not a coarser summary of it.
 
 The cost of a cache *miss* still matters, because the TTL guarantees one every 120 seconds
-and a picker opened after that pays it in full. Two things dominated it, both fixed in
-[FR-009](../friction/FR-009-every-worktree-looked-like-a-lane.md): foreign worktrees counted
-as lanes (see DD-002's membership rule), and `disk_estimate` walking nested checkouts inside
-a lane. The DISK estimate now prunes any directory holding a `.git` entry — another
-checkout's storage is never the lane's, and a stat per directory buys skipping the whole
-tree beneath it. A cold `-g` over two repositories went from 22.7 s to 2.04 s.
+and a picker opened after that pays it in full. Three things dominated it:
+
+1. Foreign worktrees counted as lanes — see DD-002's membership rule
+   ([FR-009](../friction/FR-009-every-worktree-looked-like-a-lane.md)).
+2. `disk_estimate` walking nested checkouts inside a lane. It now prunes any directory
+   holding a `.git` entry: another checkout's storage is never the lane's, and one stat per
+   directory buys skipping the whole tree beneath it.
+3. The disk walk itself, which after (1) and (2) was essentially all that was left. It is
+   now **opt-in**: plain `-g` does not measure disk, `-g --disk` does
+   ([ADR-016](../decisions/adr-016-the-disk-estimate-is-opt-in.md)). The `DISK` column
+   appears only under the flag, and `disk_estimate_bytes` is absent from `--json` rather
+   than zero when it was not measured. A row set cached without it is a miss for `--disk`;
+   one cached with it is reused without, the field cleared — so output follows the flags,
+   never the cache's contents.
+
+A cold `-g` went from 22.7 s to **~0.09 s** (0.5 s with `--disk`); warm is unchanged at 2 ms.
+`lane -i <name>` still measures disk unconditionally: one lane, and the reader asked.

@@ -102,8 +102,18 @@ print(int(d["path"].startswith("/") and d["repo_path"].startswith("/") and d["pa
 is "-g --json is valid JSON with the expected fields" \
    "$("$LANE" -g --json | python3 -c 'import json,sys
 d = json.load(sys.stdin)[0]
-fields = ("repo", "repo_path", "lane", "path", "committed_at", "disk_estimate_bytes", "ahead", "behind", "state")
+fields = ("repo", "repo_path", "lane", "path", "committed_at", "ahead", "behind", "state")
 print(int(all(f in d for f in fields)))')" "1"
+# The DISK walk is the whole of a cold -g's cost, so it is opt-in. Absent, not zero: a
+# reader must not mistake "not measured" for "measured, nothing unshared".
+is "and omits the disk estimate unless asked" \
+   "$("$LANE" -g --json | grep -c disk_estimate_bytes)" "0"
+is "--disk includes it" \
+   "$("$LANE" -g --refresh --disk --json | grep -c disk_estimate_bytes)" "1"
+is "--disk without -g is a usage error" \
+   "$("$LANE" --disk > /dev/null 2>&1; echo $?)" "2"
+is "and the text table grows a DISK column only with --disk" \
+   "$("$LANE" -g --refresh --disk | head -1 | grep -c DISK)$("$LANE" -g | head -1 | grep -c DISK)" "10"
 
 echo "== 1c. -g's own snapshot cache serves repeats, invalidates exactly, and --refresh bypasses it =="
 setup

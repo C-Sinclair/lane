@@ -30,7 +30,8 @@ fn bare_lane_lists_and_the_help_flags_reach_the_root_screen() {
         Parsed::List {
             json: false,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(ok(&["-h"]), Parsed::Help(Help::Root));
@@ -73,7 +74,8 @@ fn no_args_lists() {
         Parsed::List {
             json: false,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
 }
@@ -85,7 +87,8 @@ fn list_takes_only_json() {
         Parsed::List {
             json: false,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(
@@ -93,7 +96,8 @@ fn list_takes_only_json() {
         Parsed::List {
             json: false,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(
@@ -101,7 +105,8 @@ fn list_takes_only_json() {
         Parsed::List {
             json: true,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(
@@ -109,7 +114,8 @@ fn list_takes_only_json() {
         Parsed::List {
             json: true,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert!(err(&["--list", "extra"]).contains("unexpected argument 'extra' found"));
@@ -122,7 +128,8 @@ fn global_lists_across_repositories() {
         Parsed::List {
             json: false,
             global: true,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(
@@ -130,7 +137,8 @@ fn global_lists_across_repositories() {
         Parsed::List {
             json: false,
             global: true,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(
@@ -138,7 +146,8 @@ fn global_lists_across_repositories() {
         Parsed::List {
             json: false,
             global: true,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert_eq!(
@@ -146,7 +155,8 @@ fn global_lists_across_repositories() {
         Parsed::List {
             json: true,
             global: true,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
 }
@@ -166,7 +176,8 @@ fn refresh_only_applies_next_to_global() {
         Parsed::List {
             json: false,
             global: true,
-            refresh: true
+            refresh: true,
+            disk: false
         }
     );
     assert_eq!(
@@ -174,7 +185,8 @@ fn refresh_only_applies_next_to_global() {
         Parsed::List {
             json: true,
             global: true,
-            refresh: true
+            refresh: true,
+            disk: false
         }
     );
     assert!(err(&["--refresh"]).contains("--refresh does not apply here"));
@@ -336,7 +348,8 @@ fn structured_read_commands_take_json() {
         Parsed::List {
             json: true,
             global: false,
-            refresh: false
+            refresh: false,
+            disk: false
         }
     );
     assert!(err(&["--list", "--jsonn"]).contains("unexpected argument '--jsonn' found"));

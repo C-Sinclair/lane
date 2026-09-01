@@ -23,7 +23,13 @@ pub(crate) struct GlobalRow {
     pub(crate) committed_at: i64,
     /// An estimate, not a filesystem extent query: see `disk_estimate` below. Named to say
     /// so, rather than claiming a precision this proxy cannot deliver.
-    pub(crate) disk_estimate_bytes: u64,
+    ///
+    /// `None` when the walk was not run, which is the default: it is the whole of a cold
+    /// `-g`'s cost, and the callers that poll `-g` for a menu never read it. `--disk` opts
+    /// in. Absent from `--json` rather than zero, so a reader cannot mistake "not measured"
+    /// for "measured, nothing unshared".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) disk_estimate_bytes: Option<u64>,
     pub(crate) ahead: u32,
     pub(crate) behind: u32,
     // Owned, not `&'static str` like `wt::lane_state` returns: a value round-tripped through
@@ -38,7 +44,7 @@ struct Job<'a> {
     lane: &'a Lane,
 }
 
-pub fn list_global(json: bool, refresh: bool) -> Result<i32> {
+pub fn list_global(json: bool, refresh: bool, disk: bool) -> Result<i32> {
     // `registry::read()` self-heals: it drops (and rewrites out) any repository that has
     // moved or been deleted since the last read. That has to happen on every `-g`, cache hit
     // or not — a repo vanishing from disk is not one of the mutations `cache::invalidate` is
@@ -49,24 +55,40 @@ pub fn list_global(json: bool, refresh: bool) -> Result<i32> {
     let cached = if refresh {
         None
     } else {
-        crate::cache::read_fresh().map(|rows| {
-            let live: std::collections::HashSet<String> = repo_roots
-                .iter()
-                .map(|root| root.to_string_lossy().into_owned())
-                .collect();
-            rows.into_iter()
-                .filter(|row| live.contains(&row.repo_path))
-                .collect::<Vec<_>>()
-        })
+        crate::cache::read_fresh()
+            .and_then(|rows| {
+                // A cache written without the disk walk cannot answer `--disk`; recompute rather
+                // than print a column of blanks. The reverse is fine: a cached estimate is
+                // simply dropped below when it was not asked for.
+                if disk && rows.iter().any(|row| row.disk_estimate_bytes.is_none()) {
+                    return None;
+                }
+                Some(rows)
+            })
+            .map(|rows| {
+                let live: std::collections::HashSet<String> = repo_roots
+                    .iter()
+                    .map(|root| root.to_string_lossy().into_owned())
+                    .collect();
+                rows.into_iter()
+                    .filter(|row| live.contains(&row.repo_path))
+                    .collect::<Vec<_>>()
+            })
     };
-    let rows = match cached {
+    let mut rows = match cached {
         Some(rows) => rows,
         None => {
-            let rows = compute_rows(&repo_roots);
+            let rows = compute_rows(&repo_roots, disk);
             crate::cache::write(&rows);
             rows
         }
     };
+    // Output depends only on what was asked for, never on what a cache happened to hold.
+    if !disk {
+        for row in &mut rows {
+            row.disk_estimate_bytes = None;
+        }
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&rows)?);
@@ -85,13 +107,13 @@ pub fn list_global(json: bool, refresh: bool) -> Result<i32> {
         }
         return Ok(0);
     }
-    for line in format_global_rows(&rows) {
+    for line in format_global_rows(&rows, disk) {
         println!("{line}");
     }
     Ok(0)
 }
 
-fn compute_rows(repo_roots: &[PathBuf]) -> Vec<GlobalRow> {
+fn compute_rows(repo_roots: &[PathBuf], disk: bool) -> Vec<GlobalRow> {
     struct Repo {
         root: PathBuf,
         name: String,
@@ -136,7 +158,7 @@ fn compute_rows(repo_roots: &[PathBuf]) -> Vec<GlobalRow> {
     let mut rows: Vec<GlobalRow> = std::thread::scope(|scope| {
         let workers: Vec<_> = jobs
             .iter()
-            .map(|job| scope.spawn(|| build_row(job)))
+            .map(|job| scope.spawn(move || build_row(job, disk)))
             .collect();
         workers
             .into_iter()
@@ -147,7 +169,7 @@ fn compute_rows(repo_roots: &[PathBuf]) -> Vec<GlobalRow> {
     rows
 }
 
-fn build_row(job: &Job) -> GlobalRow {
+fn build_row(job: &Job, disk: bool) -> GlobalRow {
     let branch = &job.lane.branch;
     let committed_at: i64 = try_git(&["log", "-1", "--format=%ct", branch], Some(job.repo_root))
         .parse()
@@ -163,7 +185,7 @@ fn build_row(job: &Job) -> GlobalRow {
     );
     let (behind, ahead) = parse_left_right(&counts);
     let state = wt::lane_state(job.repo_root, job.trunk, job.lane).to_string();
-    let disk_estimate_bytes = disk_estimate(&job.lane.path, job.repo_root);
+    let disk_estimate_bytes = disk.then(|| disk_estimate(&job.lane.path, job.repo_root));
 
     GlobalRow {
         repo: job.repo_name.to_string(),
@@ -282,19 +304,33 @@ pub(crate) fn now() -> i64 {
         .unwrap_or(0)
 }
 
-fn format_global_rows(rows: &[GlobalRow]) -> Vec<String> {
-    let header = ["REPO", "LANE", "AGE", "DISK", "COMMITS", "STATE"];
-    let cells: Vec<[String; 6]> = rows
+fn format_global_rows(rows: &[GlobalRow], disk: bool) -> Vec<String> {
+    // DISK is present only when `--disk` asked for it, so the column set is decided here
+    // rather than fixed: a header with nothing under it is worse than no header.
+    let mut header: Vec<&str> = vec!["REPO", "LANE", "AGE"];
+    if disk {
+        header.push("DISK");
+    }
+    header.extend(["COMMITS", "STATE"]);
+
+    let cells: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
-            [
+            let mut cols = vec![
                 row.repo.clone(),
                 row.lane.clone(),
                 format_age(now() - row.committed_at),
-                format_bytes(row.disk_estimate_bytes),
-                format_commits(row.ahead, row.behind),
-                row.state.to_string(),
-            ]
+            ];
+            if disk {
+                cols.push(
+                    row.disk_estimate_bytes
+                        .map(format_bytes)
+                        .unwrap_or_default(),
+                );
+            }
+            cols.push(format_commits(row.ahead, row.behind));
+            cols.push(row.state.to_string());
+            cols
         })
         .collect();
 
@@ -311,7 +347,7 @@ fn format_global_rows(rows: &[GlobalRow]) -> Vec<String> {
         })
         .collect();
 
-    let render = |cols: &[String; 6]| -> String {
+    let render = |cols: &[String]| -> String {
         cols.iter()
             .enumerate()
             .map(|(i, cell)| {
@@ -327,8 +363,10 @@ fn format_global_rows(rows: &[GlobalRow]) -> Vec<String> {
             .to_string()
     };
 
-    let mut out = vec![render(&header.map(str::to_string))];
-    out.extend(cells.iter().map(render));
+    let mut out = vec![render(
+        &header.iter().map(|h| h.to_string()).collect::<Vec<_>>(),
+    )];
+    out.extend(cells.iter().map(|cols| render(cols)));
     out
 }
 

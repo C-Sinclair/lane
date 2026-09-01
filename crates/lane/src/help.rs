@@ -69,6 +69,7 @@ const ROOT: &str = "
         --prune                Remove landed lanes
         --dry-run              With --prune, list what would go, remove nothing
         --refresh              With -g, recompute and ignore the cache
+        --disk                 With -g, measure each lane's unshared storage (walks every lane's tree)
         --init                 Initialize lane in the repository
     -e, --exit                 Return to the main worktree
         --shellenv [shell]     Print shell integration (fish, bash, zsh, posix)
