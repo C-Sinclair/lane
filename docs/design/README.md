@@ -20,5 +20,5 @@ record, not here.
 | [DD-002](dd-002-worktree-lifecycle.md) | Worktree lifecycle | current | How a lane is created, entered, listed, and removed. |
 | [DD-003](dd-003-landing-detection.md) | Landing detection | current | How lane decides a branch has landed, from git refs alone. |
 | [DD-004](dd-004-shell-integration.md) | Shell integration | current | How `lane <name>`/`lane --exit` change the calling shell's directory. |
-| [DD-005](dd-005-cli-surface.md) | CLI surface | current | The full flag-only command grammar and why it has no subcommands. |
+| [DD-005](dd-005-cli-surface.md) | CLI surface | current | The full flag-only command grammar, why it has no subcommands, and the snapshot cache behind `-g`. |
 | [DD-006](dd-006-per-lane-state.md) | Per-lane state | current | The one thing lane persists per lane, and where. |

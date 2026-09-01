@@ -10,8 +10,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
-/// `$XDG_STATE_HOME/lane`, falling back to `~/.local/state/lane`.
-fn state_dir() -> PathBuf {
+/// `$XDG_STATE_HOME/lane`, falling back to `~/.local/state/lane`. Shared with `cache.rs`,
+/// which keeps its snapshot alongside the registry rather than inventing its own rule for
+/// where lane's state lives.
+pub(crate) fn state_dir() -> PathBuf {
     if let Some(xdg) = std::env::var_os("XDG_STATE_HOME") {
         if !xdg.is_empty() {
             return PathBuf::from(xdg).join("lane");
@@ -76,12 +78,21 @@ pub fn read() -> Vec<PathBuf> {
 /// target. A crash or a second writer racing this one can then never observe a truncated
 /// registry, only the old file or the new one.
 fn write_atomic(path: &Path, entries: &[PathBuf]) -> Result<()> {
-    let dir = path.parent().context("registry path has no parent")?;
+    let mut buf = Vec::new();
+    for entry in entries {
+        writeln!(buf, "{}", entry.display())?;
+    }
+    write_atomic_bytes(path, &buf)
+}
+
+/// The mechanism behind [`write_atomic`], generic over the bytes written: a temp file in
+/// `path`'s own directory, renamed over the target. `cache.rs` reuses this rather than
+/// duplicating it for JSON instead of lines.
+pub(crate) fn write_atomic_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = path.parent().context("path has no parent")?;
     std::fs::create_dir_all(dir)?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
-    for entry in entries {
-        writeln!(tmp, "{}", entry.display())?;
-    }
+    tmp.write_all(bytes)?;
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())
 }

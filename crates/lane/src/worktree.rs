@@ -439,6 +439,8 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
 
     record_fork(&root, name, &base)?;
     crate::registry::register_best_effort(&root);
+    // Membership just changed; see cache.rs for why this can't wait on the TTL.
+    crate::cache::invalidate();
 
     Ok(Created {
         path: dest,
@@ -580,6 +582,8 @@ pub fn remove(name: &str) -> Result<()> {
     if dest.exists() {
         let _ = std::fs::remove_dir_all(&dest);
     }
+    // Covers `-d`/`-D` and every lane `--prune` actually removes, since both call this.
+    crate::cache::invalidate();
     Ok(())
 }
 

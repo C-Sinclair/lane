@@ -19,3 +19,4 @@ gotchas worth remembering on their own, with nothing else to link.
 | [FR-004](FR-004-zsh-completions-cannot-be-sourced.md) | zsh completion scripts cannot be sourced | [DD-005](../design/dd-005-cli-surface.md) |
 | [FR-005](FR-005-fish-idioms-and-a-false-alarm.md) | Two fish idioms that are easy to get wrong, and one false alarm | [DD-004](../design/dd-004-shell-integration.md) |
 | [FR-006](FR-006-git-rejects-dash-prefixed-branch-names.md) | Git refuses branch names beginning with `-` | [DD-002](../design/dd-002-worktree-lifecycle.md) (open gap) |
+| [FR-007](FR-007-the-tree-walk-was-not-the-bottleneck.md) | The tree walk looked like `-g`'s bottleneck, and wasn't | [ADR-013](../decisions/adr-013-cache-the-whole-global-row-set.md) |

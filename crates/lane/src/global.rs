@@ -7,23 +7,28 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-#[derive(serde::Serialize)]
-struct GlobalRow {
-    repo: String,
+/// Shared with `cache.rs`, which stores exactly this shape: `--json`'s output must be
+/// byte-identical whether a row came from the cache or was just computed, so the cache
+/// stores the struct itself rather than re-deriving it from something coarser.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub(crate) struct GlobalRow {
+    pub(crate) repo: String,
     /// Absolute, because `repo` is only a directory name: without these a reader of the
     /// JSON can name a lane but cannot act on it.
-    repo_path: String,
-    lane: String,
-    path: String,
+    pub(crate) repo_path: String,
+    pub(crate) lane: String,
+    pub(crate) path: String,
     /// Unix timestamp of the lane branch's last commit; AGE in the text table is derived
     /// from this rather than the other way around, so JSON gets the exact value.
-    committed_at: i64,
+    pub(crate) committed_at: i64,
     /// An estimate, not a filesystem extent query: see `disk_estimate` below. Named to say
     /// so, rather than claiming a precision this proxy cannot deliver.
-    disk_estimate_bytes: u64,
-    ahead: u32,
-    behind: u32,
-    state: &'static str,
+    pub(crate) disk_estimate_bytes: u64,
+    pub(crate) ahead: u32,
+    pub(crate) behind: u32,
+    // Owned, not `&'static str` like `wt::lane_state` returns: a value round-tripped through
+    // the cache has no `'static` data to borrow from, only bytes read back off disk.
+    pub(crate) state: String,
 }
 
 struct Job<'a> {
@@ -33,7 +38,60 @@ struct Job<'a> {
     lane: &'a Lane,
 }
 
-pub fn list_global(json: bool) -> Result<i32> {
+pub fn list_global(json: bool, refresh: bool) -> Result<i32> {
+    // `registry::read()` self-heals: it drops (and rewrites out) any repository that has
+    // moved or been deleted since the last read. That has to happen on every `-g`, cache hit
+    // or not — a repo vanishing from disk is not one of the mutations `cache::invalidate` is
+    // wired to, so a warm cache never sees it on its own. It costs nothing worth caching
+    // itself: `git::layout` underneath is filesystem-only, no subprocess.
+    let repo_roots = registry::read();
+
+    let cached = if refresh {
+        None
+    } else {
+        crate::cache::read_fresh().map(|rows| {
+            let live: std::collections::HashSet<String> = repo_roots
+                .iter()
+                .map(|root| root.to_string_lossy().into_owned())
+                .collect();
+            rows.into_iter()
+                .filter(|row| live.contains(&row.repo_path))
+                .collect::<Vec<_>>()
+        })
+    };
+    let rows = match cached {
+        Some(rows) => rows,
+        None => {
+            let rows = compute_rows(&repo_roots);
+            crate::cache::write(&rows);
+            rows
+        }
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(0);
+    }
+    // An empty registry and registered repositories that simply hold no lanes are different
+    // situations, and only the first one is the reader's to act on.
+    if rows.is_empty() {
+        match repo_roots.len() {
+            0 => {
+                println!("no repositories registered");
+                println!("  lane registers one when you run `lane --init` or create a lane in it");
+            }
+            1 => println!("no lanes in the 1 registered repository"),
+            n => println!("no lanes in any of the {n} registered repositories"),
+        }
+        return Ok(0);
+    }
+    for line in format_global_rows(&rows) {
+        println!("{line}");
+    }
+    Ok(0)
+}
+
+fn compute_rows(repo_roots: &[PathBuf]) -> Vec<GlobalRow> {
     struct Repo {
         root: PathBuf,
         name: String,
@@ -41,17 +99,17 @@ pub fn list_global(json: bool) -> Result<i32> {
         lanes: Vec<Lane>,
     }
 
-    let repos: Vec<Repo> = registry::read()
-        .into_iter()
+    let repos: Vec<Repo> = repo_roots
+        .iter()
         .map(|root| {
-            let trunk = wt::trunk_name(&root);
-            let lanes = wt::list_lanes(&root);
+            let trunk = wt::trunk_name(root);
+            let lanes = wt::list_lanes(root);
             let name = root
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| root.to_string_lossy().into_owned());
             Repo {
-                root,
+                root: root.clone(),
                 name,
                 trunk,
                 lanes,
@@ -71,8 +129,10 @@ pub fn list_global(json: bool) -> Result<i32> {
         })
         .collect();
 
-    // The tree walk behind the DISK estimate is what makes `-g` slow, since it crosses build
-    // caches; one thread per lane is what `list` already does for dirty status.
+    // The tree walk behind the DISK estimate is what makes a cold `-g` slow, since it
+    // crosses build caches; one thread per lane is what `list` already does for dirty
+    // status. Warm, this whole pass is dominated by the git subprocesses `build_row` spawns
+    // rather than the walk — which is exactly what the cache above exists to skip.
     let mut rows: Vec<GlobalRow> = std::thread::scope(|scope| {
         let workers: Vec<_> = jobs
             .iter()
@@ -84,28 +144,7 @@ pub fn list_global(json: bool) -> Result<i32> {
             .collect()
     });
     rows.sort_by(|a, b| b.committed_at.cmp(&a.committed_at));
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&rows)?);
-        return Ok(0);
-    }
-    // An empty registry and registered repositories that simply hold no lanes are different
-    // situations, and only the first one is the reader's to act on.
-    if rows.is_empty() {
-        match repos.len() {
-            0 => {
-                println!("no repositories registered");
-                println!("  lane registers one when you run `lane --init` or create a lane in it");
-            }
-            1 => println!("no lanes in the 1 registered repository"),
-            n => println!("no lanes in any of the {n} registered repositories"),
-        }
-        return Ok(0);
-    }
-    for line in format_global_rows(&rows) {
-        println!("{line}");
-    }
-    Ok(0)
+    rows
 }
 
 fn build_row(job: &Job) -> GlobalRow {
@@ -123,7 +162,7 @@ fn build_row(job: &Job) -> GlobalRow {
         Some(job.repo_root),
     );
     let (behind, ahead) = parse_left_right(&counts);
-    let state = wt::lane_state(job.repo_root, job.trunk, job.lane);
+    let state = wt::lane_state(job.repo_root, job.trunk, job.lane).to_string();
     let disk_estimate_bytes = disk_estimate(&job.lane.path, job.repo_root);
 
     GlobalRow {

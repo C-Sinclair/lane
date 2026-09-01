@@ -27,3 +27,4 @@ try, and why it stopped.
 | [ADR-010](adr-010-llm-review-of-drifted-notes.md) | LLM review of drifted notes | superseded by ADR-001 | Optional model-assisted triage of stale notes, corrected to mark authorship and expose verdicts as ordinary verbs. |
 | [ADR-011](adr-011-auto-install-skill-and-hooks.md) | Auto-install skill and hooks | superseded by ADR-001 | `lane install skill`/hooks, and the replaceable-marker fix for repairing previously-installed text. |
 | [ADR-012](adr-012-interactive-tour-as-separate-binary.md) | Interactive tour as a separate binary | superseded by ADR-001 | A teaching aid shipped as its own crate, with a hard boundary against affecting the real binary. |
+| [ADR-013](adr-013-cache-the-whole-global-row-set.md) | Cache the whole `-g` row set, not just the disk estimate | accepted | Measured the tree walk as nearly free warm; git subprocess spawns dominate, so the cache covers the whole row. |

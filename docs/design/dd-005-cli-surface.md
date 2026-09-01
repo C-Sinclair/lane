@@ -11,6 +11,7 @@ The complete command grammar, and why every bare word is a lane name.
 lane                                        list lanes
 lane <name> [-b|--base <rev>] [--dirty]     enter a lane, or create it
 lane -d|-D <name>...                        delete
+lane -g|--global [--refresh]                list lanes across every repository
 lane --prune [--dry-run]
 lane --init
 lane --exit
@@ -49,3 +50,14 @@ owns the built-in help text and the strings copied into parse errors, so the two
 from each other independently. `--completions fish|bash|zsh` prints a completion script that
 completes lane names as bare arguments and after `-d`/`-D` — see FR-004 for why the zsh
 script in particular can't be `source`d directly and must land on `$fpath` as `_lane`.
+
+## `-g`'s cache
+
+`-g` is answered from `cache.rs`'s snapshot (`$XDG_STATE_HOME/lane/cache.json`) whenever one
+is on hand and fresh, rather than recomputed every time: ADR-013 has the measurements behind
+that choice (a warm `-g` is dominated by git subprocess spawns, not the disk-estimate walk),
+and `cache.rs`'s module doc has the two-mechanism freshness design — exact invalidation for
+lane membership, a 120-second TTL for the derived columns. `--refresh` (valid only alongside
+`-g`, enforced the same way `--dry-run` is pinned to `--prune`) bypasses the TTL and rewrites
+the cache. `-g --json` is byte-identical whether the rows came from the cache or were just
+computed — the cache stores the exact row shape lane prints, not a coarser summary of it.

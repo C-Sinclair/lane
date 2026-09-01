@@ -97,8 +97,19 @@ you are standing in: `REPO`, `LANE`, `AGE` (time since the lane branch's last co
 commit timestamp as a raw unix time rather than the rendered `AGE` string, and absolute
 `path` and `repo_path` values, since `REPO` in the table is only a directory name and a
 reader that cannot locate a lane cannot act on one. `-g` walks every
-lane's working tree to compute `DISK`, so it is slower than a plain `lane --list` — expect it
-to take longer the more lanes you have and the larger their build caches are.
+lane's working tree to compute `DISK`, so a cold `-g` is slower than a plain `lane --list` —
+expect it to take longer the more lanes you have and the larger their build caches are.
+
+A warm `-g` is served from a snapshot at `$XDG_STATE_HOME/lane/cache.json` (or
+`~/.local/state/lane/cache.json`) instead of recomputing every row: which lanes exist is
+invalidated exactly, the moment lane itself changes it (creating a lane, `-d`/`-D`, a
+`--prune` that removes anything, `--init`), so a lane you just made or removed is never
+missing or lingering regardless of the cache. The derived columns — `AGE`, `DISK`,
+`COMMITS`, `STATE` — carry a 120-second TTL instead, since they can drift for reasons lane
+does not observe (a commit made inside a lane, a build that grew its tree, a branch landing
+elsewhere). `--refresh` recomputes and rewrites the cache, ignoring the TTL; `-g --json`
+prints byte-identical output whether served from cache or computed fresh. The cache file is
+safe to delete at any time — lane just rebuilds it on the next `-g`.
 
 `DISK` is an estimate, not a filesystem measurement: neither APFS nor Linux exposes a cheap
 "bytes unique to this file" query, and `stat`'s block count reports a reflinked file's full

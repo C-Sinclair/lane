@@ -1,4 +1,5 @@
 pub mod args;
+pub mod cache;
 pub mod cli;
 pub mod cow;
 pub mod git;

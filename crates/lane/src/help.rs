@@ -59,7 +59,7 @@ const ROOT: &str = "
 
   Options
     -l, --list                 List lanes
-    -g, --global               List lanes across every repository (slower: walks working trees)
+    -g, --global               List lanes across every repository (derived columns may be up to 120s stale; see --refresh)
     -i, --info [<name>]        Describe one lane in detail (defaults to the lane you are standing in)
         --json                 Emit machine-readable JSON (with or without --list)
     -b, --base <rev>           Branch from <rev> instead of the default base (create only)
@@ -68,6 +68,7 @@ const ROOT: &str = "
     -D, --force-delete         Delete anyway, discarding whatever it holds
         --prune                Remove landed lanes
         --dry-run              With --prune, list what would go, remove nothing
+        --refresh              With -g, recompute and ignore the cache
         --init                 Initialize lane in the repository
     -e, --exit                 Return to the main worktree
         --shellenv [shell]     Print shell integration (fish, bash, zsh, posix)
@@ -81,6 +82,7 @@ const ROOT: &str = "
     $ lane hotfix --base v1.2.0
     $ lane -d fix-login old-spike
     $ lane -g                     Every lane across every repository lane knows about
+    $ lane -g --refresh           Same, but recomputed rather than served from cache
     $ lane -i fix-login           Detail on that lane, from anywhere in the repo
     $ lane --prune
     $ eval \"$(lane --shellenv)\"

@@ -39,7 +39,11 @@ pub fn run() -> Result<i32> {
         }
         Parsed::Init => init(),
         Parsed::Open(args) => open(&args.name, args.base.as_deref(), args.dirty),
-        Parsed::List { json, global } => list(json, global),
+        Parsed::List {
+            json,
+            global,
+            refresh,
+        } => list(json, global, refresh),
         Parsed::Delete(args) => delete(&args.names, args.force),
         Parsed::Info { name, json } => crate::info::show(name.as_deref(), json),
         Parsed::Exit => exit(),
@@ -56,6 +60,10 @@ fn init() -> Result<i32> {
     std::fs::write(lane.join(".gitkeep"), "")?;
 
     crate::registry::register_best_effort(&root);
+    // A newly-registered repository (or one initialized a second time) changes what `-g`
+    // ought to show; see cache.rs for why membership is invalidated outright rather than
+    // left to the TTL.
+    crate::cache::invalidate();
     let (ok, detail) = crate::cow::probe(&root);
     println!("initialized .lane/");
     println!(
@@ -130,9 +138,9 @@ fn format_lane_rows(rows: &[LaneRow]) -> Vec<String> {
         .collect()
 }
 
-fn list(json: bool, global: bool) -> Result<i32> {
+fn list(json: bool, global: bool, refresh: bool) -> Result<i32> {
     if global {
-        return crate::global::list_global(json);
+        return crate::global::list_global(json, refresh);
     }
     let root = wt::main_root()?;
     let lanes = wt::list_lanes(&root);
@@ -331,6 +339,7 @@ complete -c lane -s D -l force-delete
 complete -c lane -s i -l info
 complete -c lane -l prune
 complete -c lane -l dry-run
+complete -c lane -l refresh
 complete -c lane -l init
 complete -c lane -s e -l exit
 complete -c lane -l shellenv -xa 'fish bash zsh posix'
@@ -358,7 +367,7 @@ complete -c lane -n '__fish_seen_argument -s d -s D -s i' -a "(command lane 2>/d
     esac
   done
 
-  COMPREPLY=($(compgen -W "$(lanes) -l --list -g --global -i --info --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init -e --exit --shellenv --completions -h --help -V --version" -- "$cur"))
+  COMPREPLY=($(compgen -W "$(lanes) -l --list -g --global -i --info --json --base --dirty -d --delete -D --force-delete --prune --dry-run --refresh --init -e --exit --shellenv --completions -h --help -V --version" -- "$cur"))
 }}
 complete -F _lane lane"#,
         ),
@@ -368,7 +377,7 @@ complete -F _lane lane"#,
 _lane() {{
   local -a lanes flags
   lanes=(${{(f)"$(command lane 2>/dev/null | awk '{{print $1}}')"}})
-  flags=(-l --list -g --global -i --info --json --base --dirty -d --delete -D --force-delete --prune --dry-run --init -e --exit --shellenv --completions -h --help -V --version)
+  flags=(-l --list -g --global -i --info --json --base --dirty -d --delete -D --force-delete --prune --dry-run --refresh --init -e --exit --shellenv --completions -h --help -V --version)
 
   case "${{words[CURRENT-1]}}" in
     --shellenv) compadd -- fish bash zsh posix; return ;;

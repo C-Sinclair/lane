@@ -105,6 +105,52 @@ d = json.load(sys.stdin)[0]
 fields = ("repo", "repo_path", "lane", "path", "committed_at", "disk_estimate_bytes", "ahead", "behind", "state")
 print(int(all(f in d for f in fields)))')" "1"
 
+echo "== 1c. -g's own snapshot cache serves repeats, invalidates exactly, and --refresh bypasses it =="
+setup
+CACHE="$XDG_STATE_HOME/lane/cache.json"
+"$LANE" cache-lane > /dev/null 2>&1
+"$LANE" -g --json > /dev/null
+is "-g writes its snapshot cache" "$([ -f "$CACHE" ] && echo yes || echo no)" "yes"
+
+GEN1=$(python3 -c 'import json; print(json.load(open("'"$CACHE"'"))["generated_at"])')
+"$LANE" -g --json > /dev/null
+GEN2=$(python3 -c 'import json; print(json.load(open("'"$CACHE"'"))["generated_at"])')
+is "a second -g is served from cache, not rewritten" "$GEN2" "$GEN1"
+
+"$LANE" second-lane > /dev/null 2>&1
+is "a lane created under a warm cache appears in -g immediately" \
+   "$("$LANE" -g | awk '$2 == "second-lane" { n++ } END { print n + 0 }')" "1"
+
+"$LANE" -d second-lane > /dev/null 2>&1
+is "a lane deleted under a warm cache disappears from -g immediately" \
+   "$("$LANE" -g | awk '$2 == "second-lane" { n++ } END { print n + 0 }')" "0"
+
+"$LANE" landed-lane > /dev/null 2>&1
+( cd "$TMP/repo/.lane/trees/landed-lane" && echo "fn m() {}" > src/m.rs \
+  && git add -A && git commit -qm "landed work" > /dev/null )
+git merge -q --no-edit landed-lane > /dev/null 2>&1
+"$LANE" -g --json > /dev/null
+"$LANE" --prune > /dev/null 2>&1
+is "a --prune that removes a lane invalidates a warm cache" \
+   "$("$LANE" -g | awk '$2 == "landed-lane" { n++ } END { print n + 0 }')" "0"
+
+"$LANE" -g --json > /dev/null
+GEN3=$(python3 -c 'import json; print(json.load(open("'"$CACHE"'"))["generated_at"])')
+sleep 1
+"$LANE" -g --refresh --json > /dev/null
+GEN4=$(python3 -c 'import json; print(json.load(open("'"$CACHE"'"))["generated_at"])')
+is "--refresh rewrites generated_at rather than serving the cache" \
+   "$([ "$GEN4" -gt "$GEN3" ] && echo yes || echo no)" "yes"
+
+is "--refresh without -g exits 2" "$("$LANE" --refresh > /dev/null 2>&1; echo $?)" "2"
+is "and reports a usage error" "$("$LANE" --refresh 2>&1 | grep -c '^error:')" "1"
+
+rm -f "$CACHE"
+FRESH=$("$LANE" -g --json)
+CACHED=$("$LANE" -g --json)
+is "cached and freshly computed -g --json are byte-identical" \
+   "$([ "$FRESH" = "$CACHED" ] && echo yes || echo no)" "yes"
+
 echo "== 2. a bare name: warm cache arrives, tracked files from git, status clean =="
 setup
 is "--list json is an empty array before a lane exists" \

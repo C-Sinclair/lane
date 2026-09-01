@@ -44,11 +44,20 @@ pub enum Shell {
 /// store.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Parsed {
-    List { json: bool, global: bool },
+    List {
+        json: bool,
+        global: bool,
+        refresh: bool,
+    },
     Open(OpenArgs),
     Delete(DeleteArgs),
-    Info { name: Option<String>, json: bool },
-    Prune { dry_run: bool },
+    Info {
+        name: Option<String>,
+        json: bool,
+    },
+    Prune {
+        dry_run: bool,
+    },
     Init,
     Exit,
     Shellenv(Shell),
@@ -138,6 +147,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let completions = pargs.contains("--completions");
     let base: Option<String> = pargs.opt_value_from_str(["-b", "--base"])?;
     let dirty = pargs.contains("--dirty");
+    let refresh = pargs.contains("--refresh");
 
     let positionals = positionals(pargs, after, Help::Root)?;
 
@@ -211,6 +221,11 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     if global && !global_ok {
         return Err(misplaced("-g/--global", Help::Root));
     }
+    // `--refresh` only means something next to `-g`: it names which cache entry to skip,
+    // and `-g` is the only thing here that reads one.
+    if refresh && !global {
+        return Err(misplaced("--refresh", Help::Root));
+    }
 
     let parsed = match selected {
         Selected::Delete | Selected::ForceDelete => {
@@ -253,7 +268,11 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
         }
         Selected::List => {
             none(positionals, Help::Root)?;
-            Parsed::List { json, global }
+            Parsed::List {
+                json,
+                global,
+                refresh,
+            }
         }
         Selected::Open => {
             let name = one(positionals, "<NAME>", Help::Root)?;
