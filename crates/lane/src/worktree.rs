@@ -113,14 +113,45 @@ pub fn is_dirty(path: &Path) -> bool {
     .is_empty()
 }
 
+/// Every checkout of this repository, canonicalized so a path can be compared to one.
+fn checkouts(root: &Path) -> Vec<PathBuf> {
+    try_git(&["worktree", "list", "--porcelain"], Some(root))
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(|path| {
+            let path = PathBuf::from(path);
+            path.canonicalize().unwrap_or(path)
+        })
+        .collect()
+}
+
+/// Whether an ignored entry holds a checkout rather than a build cache.
+///
+/// git collapses an ignored directory to its shallowest root, so an entry can be an
+/// ancestor of the lanes directory instead of equal to it — and a directory holding
+/// another tool's worktrees is a checkout too. Neither is a cache worth carrying, and
+/// cloning one copies whole sibling working trees into the new lane.
+fn holds_a_checkout(base: &Path, entry: &str, checkouts: &[PathBuf]) -> bool {
+    let path = base.join(entry);
+    if path == lanes_dir(base) || lanes_dir(base).starts_with(&path) {
+        return true;
+    }
+    let canonical = path.canonicalize().unwrap_or(path);
+    checkouts
+        .iter()
+        .any(|checkout| *checkout != canonical && checkout.starts_with(&canonical))
+}
+
 /// Entries git will not materialize: exactly what a fresh worktree is missing.
 /// Already collapsed to directory roots, at any depth, from the user's own ignore rules.
 fn ignored_entries(root: &Path) -> Vec<String> {
+    let checkouts = checkouts(root);
     try_git(&["status", "--porcelain", "-z", "--ignored"], Some(root))
         .split('\0')
         .filter_map(|e| e.strip_prefix("!! "))
         .map(|p| p.trim_end_matches('/').to_string())
-        .filter(|p| !p.is_empty() && p != ".git" && p != TREES_PATH)
+        .filter(|p| !p.is_empty() && p != ".git")
+        .filter(|p| !holds_a_checkout(root, p, &checkouts))
         .collect()
 }
 
@@ -319,6 +350,30 @@ fn branch_args<'a>(adopt: bool, name: &'a str, dest: &'a str, base: &'a str) -> 
     }
 }
 
+/// Remote-tracking branches of the same name, one per remote that publishes it.
+///
+/// Only refs already fetched: creating a lane is not the moment to reach the network, and
+/// a lane whose name happens to match an unfetched branch is an ordinary new branch.
+fn upstream_matches(root: &Path, name: &str) -> Vec<String> {
+    try_git(&["remote"], Some(root))
+        .lines()
+        .map(str::trim)
+        .filter(|remote| !remote.is_empty())
+        .map(|remote| format!("{remote}/{name}"))
+        .filter(|candidate| {
+            git_ok(
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/remotes/{candidate}"),
+                ],
+                Some(root),
+            )
+        })
+        .collect()
+}
+
 /// By default git checks out tracked files and ignored entries are cloned by reference.
 pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
     let root = main_root()?;
@@ -336,7 +391,25 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
     if adopt && base.is_some() {
         bail!("branch {name} already exists; --base applies only to a new branch");
     }
-    let base = base.map(str::to_string).unwrap_or_else(|| new_base(&root));
+    // A lane named after a branch that already exists on a remote continues that work
+    // rather than starting a parallel branch from local HEAD, which would silently leave
+    // the published commits behind. An explicit --base is the way to say otherwise.
+    let mut track = false;
+    let mut upstream = Vec::new();
+    if !adopt && base.is_none() {
+        upstream = upstream_matches(&root, name);
+        if upstream.len() > 1 {
+            bail!(
+                "{name} exists on more than one remote ({}); name one with --base",
+                upstream.join(", ")
+            );
+        }
+        track = upstream.len() == 1;
+    }
+    let base = base
+        .map(str::to_string)
+        .or_else(|| upstream.first().cloned())
+        .unwrap_or_else(|| new_base(&root));
     let dest = lanes_dir(&root).join(name);
     if dest.exists() {
         bail!("lane {name} already exists at {}", dest.display());
@@ -350,6 +423,9 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
     )];
     if !supported {
         notes.push("no reflink here; leaving a plain worktree".into());
+    }
+    if track {
+        notes.push(format!("branched from {base} and tracking it"));
     }
     if !dirty {
         let carried = try_git(
@@ -370,13 +446,18 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
     let stats = match materialization(dirty, supported) {
         Materialization::Dirty => {
             let mut args = vec!["--no-checkout"];
+            if track {
+                args.push("--track");
+            }
             args.extend(branch_args(adopt, name, &dest_str, &base));
             add_worktree(&root, &args)?;
-            let skip = |rel: &str, _is_dir: bool| {
+            // Nested checkouts are pruned here for the same reason `ignored_entries`
+            // drops them: they are working trees, not caches this lane should carry.
+            let checkouts = checkouts(&root);
+            let skip = |rel: &str, is_dir: bool| {
                 rel == ".git"
                     || rel.starts_with(".git/")
-                    || rel == TREES_PATH
-                    || rel.starts_with(".lane/trees/")
+                    || (is_dir && holds_a_checkout(&root, rel, &checkouts))
             };
             let stats = cow::clone_tree(&root, &dest, &skip)?;
             // Repopulate the index from the checked-out tree without rewriting a single
@@ -407,6 +488,9 @@ pub fn create(name: &str, base: Option<&str>, dirty: bool) -> Result<Created> {
             };
             let excluded = excluded(&root);
             let mut args = Vec::new();
+            if track {
+                args.push("--track");
+            }
             args.extend(branch_args(adopt, name, &dest_str, &base));
             add_worktree(&root, &args)?;
             let mut stats = cow::CloneStats::default();
@@ -782,17 +866,56 @@ mod tests {
         // A developer signing every commit makes gpg a dependency of the test suite, and
         // under parallel load it fails to allocate and takes the run with it.
         run(&["config", "commit.gpgsign", "false"]);
-        std::fs::write(r.join(".gitignore"), ".lane/trees/\ncache/\n")?;
+        std::fs::write(r.join(".gitignore"), ".lane/\ncache/\n.wt/\n")?;
         run(&["add", ".gitignore"]);
         run(&["commit", "-qm", "base"]);
         std::fs::create_dir_all(r.join(".lane/trees/other"))?;
         std::fs::create_dir_all(r.join("cache"))?;
         std::fs::write(r.join("cache/blob"), "cache")?;
+        // Another tool's worktree directory: a checkout, not a cache worth carrying.
+        run(&["worktree", "add", "-q", "-b", "side", ".wt/side"]);
 
         let entries = ignored_entries(r);
 
         assert!(entries.contains(&"cache".to_string()));
+        // git collapses the ignored directory to `.lane`, never to `.lane/trees`, which is
+        // why comparing against TREES_PATH alone let every sibling lane be cloned.
+        assert!(!entries.contains(&".lane".to_string()));
         assert!(!entries.contains(&TREES_PATH.to_string()));
+        assert!(!entries.contains(&".wt".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn a_lane_name_matching_a_fetched_remote_branch_finds_its_upstream() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let origin = home.path().join("origin");
+        let clone = home.path().join("clone");
+        let run = |args: &[&str], cwd: &Path| {
+            git(args, Some(cwd)).ok();
+        };
+        std::fs::create_dir_all(&origin)?;
+        run(&["init", "-qb", "main"], &origin);
+        run(&["config", "user.email", "t@t.t"], &origin);
+        run(&["config", "user.name", "t"], &origin);
+        run(&["config", "commit.gpgsign", "false"], &origin);
+        std::fs::write(origin.join("f"), "f")?;
+        run(&["add", "f"], &origin);
+        run(&["commit", "-qm", "base"], &origin);
+        run(&["branch", "feature"], &origin);
+        git(
+            &[
+                "clone",
+                "-q",
+                &origin.to_string_lossy(),
+                &clone.to_string_lossy(),
+            ],
+            None,
+        )?;
+
+        assert_eq!(upstream_matches(&clone, "feature"), vec!["origin/feature"]);
+        // A name nothing publishes is an ordinary new branch, not an error.
+        assert!(upstream_matches(&clone, "nothing-upstream").is_empty());
         Ok(())
     }
 

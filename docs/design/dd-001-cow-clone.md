@@ -23,6 +23,27 @@ maintenance: whatever the repository's own `.gitignore` says is warm, is warm.
 `--dirty` extends the same clone to tracked, uncommitted edits and untracked-but-not-ignored
 files, so a lane can carry in-progress work as well as caches.
 
+### Except a checkout, which is never a cache
+
+Two kinds of ignored directory must be dropped from the warm set: the lanes directory
+itself, and any directory holding another checkout of the same repository — `.wt/` from
+`git-wt`, `.claude/worktrees/`, a bare `git worktree add` somewhere ignored. Cloning one
+copies whole working trees into the new lane, and cloning the lanes directory means each new
+lane contains a copy of every sibling, so the cost compounds with every lane kept.
+
+The test is containment, not equality, in both directions:
+
+- an entry is dropped when it **is or contains** `.lane/trees`, because
+  `git status --ignored` collapses an ignored directory to its shallowest root — a
+  repository ignoring `.lane/` wholesale reports the entry as `.lane`, never as
+  `.lane/trees`;
+- an entry is dropped when any path from `git worktree list --porcelain` lies **beneath**
+  it, which identifies another tool's worktree directory without naming the tool.
+
+[FR-008](../friction/FR-008-ignored-entries-collapse-above-the-lanes-directory.md) records
+what the equality check cost before this: a 2-minute, 76 GiB, 1.4-million-file lane creation
+in a repository whose real caches are 853 MiB across 40k files.
+
 ## Two clone mechanisms, one interface
 
 `crates/lane/src/cow.rs` wraps the two reflink syscalls behind one `clone_file`/`clone_dir`

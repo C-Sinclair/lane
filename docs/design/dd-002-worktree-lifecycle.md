@@ -29,12 +29,19 @@ local and never committed, matching the fact that lanes are a local, per-machine
 
 `lane <name> [-b|--base <rev>] [--dirty]`:
 
-1. Resolve the base: `--base <rev>` if given, otherwise the repository's default branch
-   (`wt::trunk_name`).
+1. Resolve the branch. An existing local branch of that name is adopted as-is. Otherwise,
+   with no `--base`, a name matching exactly one remote-tracking branch across the
+   configured remotes branches from it and tracks it
+   ([ADR-014](../decisions/adr-014-a-lane-name-adopts-a-matching-upstream-branch.md));
+   more than one match is an error naming the remotes. Only refs already fetched count —
+   creating a lane never reaches the network. Failing all that, the base is `--base <rev>`
+   if given, otherwise the current branch, or the repository's default branch when HEAD is
+   detached (`wt::trunk_name`).
 2. `git worktree add` the new branch and directory.
 3. Record the fork point at `refs/lane/<name>` (see DD-006).
-4. Clone in the warm set — every git-ignored entry, plus dirty/untracked-non-ignored content
-   under `--dirty` — via the copy-on-write layer (DD-001).
+4. Clone in the warm set — every git-ignored entry that is not itself a checkout, plus
+   dirty/untracked-non-ignored content under `--dirty` — via the copy-on-write layer
+   (DD-001).
 
 `--base` and `--dirty` only apply at creation; re-running `lane <name>` against an existing
 lane just enters it.

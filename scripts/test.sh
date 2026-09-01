@@ -554,6 +554,45 @@ is "-i with a conflicting operation flag exits 2" \
    "$("$LANE" -i feat-login --prune > /dev/null 2>&1; echo $?)" "2"
 is "and reports a usage error" "$("$LANE" -i --prune 2>&1 | grep -c '^error:')" "1"
 
+echo "== 18. a lane named after a remote branch continues it =="
+setup
+remote_setup
+git push -q origin main
+git checkout -qb published
+echo published > published.txt && git add -A && git commit -qm "work already on the remote"
+git push -q origin published
+git checkout -q main
+git branch -qD published
+is "the branch is gone locally" \
+   "$(git rev-parse --verify --quiet refs/heads/published > /dev/null; echo $?)" "1"
+"$LANE" published > /dev/null 2>&1
+cd .lane/trees/published
+is "the lane sits on the published commit" \
+   "$(git log --oneline -1 --format=%s)" "work already on the remote"
+is "and tracks the remote branch" "$(git rev-parse --abbrev-ref '@{upstream}')" "origin/published"
+cd ../../..
+is "a name nothing publishes still forks from HEAD" \
+   "$("$LANE" fresh > /dev/null 2>&1; git -C .lane/trees/fresh log --oneline -1 --format=%s)" "lane init"
+is "and has no upstream" \
+   "$(git -C .lane/trees/fresh rev-parse --abbrev-ref '@{upstream}' 2>/dev/null; echo $?)" "128"
+is "--base overrides the upstream match" \
+   "$("$LANE" published2 --base main > /dev/null 2>&1; echo $?)" "0"
+
+echo "== 19. an ignored directory holding other checkouts is not cloned =="
+setup
+printf 'node_modules/\n.wt/\n' > .gitignore
+git add -A && git commit -qm "ignore .wt"
+git worktree add -q -b side .wt/side
+head -c 3000000 /dev/urandom > .wt/side/big.bin
+"$LANE" isolated > /dev/null 2>&1
+is ".wt/ was not cloned into the lane" \
+   "$([ -e .lane/trees/isolated/.wt ] && echo yes || echo no)" "no"
+is "the real cache still was" \
+   "$([ -f .lane/trees/isolated/node_modules/pkg/blob.bin ] && echo yes || echo no)" "yes"
+"$LANE" second > /dev/null 2>&1
+is "and a sibling lane is not cloned into the next one" \
+   "$([ -e .lane/trees/second/.lane/trees/isolated ] && echo yes || echo no)" "no"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
