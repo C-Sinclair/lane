@@ -636,8 +636,9 @@ pub fn losses(root: &Path, path: &Path, branch: &str, trunk: &str) -> Vec<String
         return out;
     }
 
-    // A lane that never committed has no commits to lose, landed or not.
-    if started(root, branch) && !landed(root, trunk, branch) {
+    // A lane that never committed has no commits to lose, landed or not, and one whose
+    // every commit sits on a remote loses none either: the remote still holds them.
+    if started(root, branch) && !landed(root, trunk, branch) && !published(root, branch) {
         // No count: a squash merge leaves commits whose patches landed inside one of
         // trunk's, so `rev-list` would name a number larger than what is really at risk.
         out.push(format!("commits {trunk} does not have"));
@@ -801,6 +802,35 @@ fn started(root: &Path, branch: &str) -> bool {
     try_git(&["rev-parse", branch], Some(root)) != fork
 }
 
+/// Whether every commit on this branch already exists on a remote.
+///
+/// Deleting the lane then destroys no work: the commits are fetchable again. Checks the
+/// tracking branch first, and any `<remote>/<branch>` ref for a branch that never set one.
+pub fn published(root: &Path, branch: &str) -> bool {
+    let mut refs = Vec::new();
+    let tracked = try_git(
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{branch}@{{upstream}}"),
+        ],
+        Some(root),
+    );
+    if !tracked.is_empty() {
+        refs.push(tracked);
+    }
+    refs.extend(upstream_matches(root, branch));
+    refs.iter().any(|remote| {
+        try_git(
+            &["rev-list", "--count", branch, "--not", remote],
+            Some(root),
+        )
+        .trim()
+            == "0"
+    })
+}
+
 pub fn contained_in(root: &Path, trunk: &str, branch: &str) -> bool {
     if git_ok(&["merge-base", "--is-ancestor", branch, trunk], Some(root)) {
         return true;
@@ -943,6 +973,56 @@ mod tests {
         assert_eq!(upstream_matches(&clone, "feature"), vec!["origin/feature"]);
         // A name nothing publishes is an ordinary new branch, not an error.
         assert!(upstream_matches(&clone, "nothing-upstream").is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_branch_whose_commits_are_all_pushed_loses_nothing() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let origin = home.path().join("origin");
+        let clone = home.path().join("clone");
+        let run = |args: &[&str], cwd: &Path| {
+            git(args, Some(cwd)).ok();
+        };
+        std::fs::create_dir_all(&origin)?;
+        run(&["init", "-qb", "main"], &origin);
+        run(&["config", "user.email", "t@t.t"], &origin);
+        run(&["config", "user.name", "t"], &origin);
+        run(&["config", "commit.gpgsign", "false"], &origin);
+        std::fs::write(origin.join("f"), "f")?;
+        run(&["add", "f"], &origin);
+        run(&["commit", "-qm", "base"], &origin);
+        git(
+            &[
+                "clone",
+                "-q",
+                &origin.to_string_lossy(),
+                &clone.to_string_lossy(),
+            ],
+            None,
+        )?;
+        run(&["config", "user.email", "t@t.t"], &clone);
+        run(&["config", "user.name", "t"], &clone);
+        run(&["config", "commit.gpgsign", "false"], &clone);
+        run(&["checkout", "-qb", "feature"], &clone);
+        std::fs::write(clone.join("g"), "g")?;
+        run(&["add", "g"], &clone);
+        run(&["commit", "-qm", "work"], &clone);
+
+        assert!(
+            !published(&clone, "feature"),
+            "an unpushed commit is still only here"
+        );
+        assert_eq!(
+            losses(&clone, Path::new("/nonexistent"), "feature", "main"),
+            vec!["commits main does not have".to_string()]
+        );
+
+        run(&["push", "-q", "-u", "origin", "feature"], &clone);
+
+        assert!(published(&clone, "feature"));
+        // origin holds every commit, so removing the lane destroys nothing.
+        assert!(losses(&clone, Path::new("/nonexistent"), "feature", "main").is_empty());
         Ok(())
     }
 

@@ -77,6 +77,12 @@ or commits trunk does not have. `losses()` reports what would be lost without gu
 count when the branch was squash-merged, since a squash makes `rev-list` count patches that
 already landed under a different sha. `-D`/`--force-delete` deletes anyway.
 
+`published()` exempts a branch whose every commit already exists on a remote, checked
+against its tracking branch and then any `<remote>/<branch>` ref. A pushed branch waiting on
+review is not contained in trunk, so containment alone kept it. The commits are fetchable
+again, so removing the lane destroys nothing but uncommitted changes, which `losses()` still
+reports on their own.
+
 ## Pruning
 
 `lane --prune` fetches (best-effort — a failed fetch degrades to deciding on cached remote
