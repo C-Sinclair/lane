@@ -649,20 +649,22 @@ pub fn losses(root: &Path, path: &Path, branch: &str, trunk: &str) -> Vec<String
 /// Remove a lane's worktree and its branch, and with them everything the lane still held.
 ///
 /// Unconditional by design: `losses` is the guard, and every caller runs it first.
-pub fn remove(name: &str) -> Result<()> {
+///
+/// Returns whether the caller was standing in the lane. Removing the directory a process
+/// sits in leaves it on a path that no longer exists, so this chdirs to the main root
+/// first; the shell that invoked it is still there, and the answer is what tells the
+/// caller to move it. See adr-017.
+pub fn remove(name: &str) -> Result<bool> {
     let root = main_root()?;
     let dest = lanes_dir(&root).join(name);
 
-    // Deleting the directory the caller is standing in leaves their shell in a path that no
-    // longer exists, which is the failure plan 006 exists to prevent. `merge` chdirs to the
-    // root before it gets here; `rm` and `prune` have no reason to, so refuse instead.
     let inside = std::env::current_dir()
         .ok()
         .and_then(|cwd| cwd.canonicalize().ok())
         .zip(dest.canonicalize().ok())
         .is_some_and(|(cwd, dest)| cwd.starts_with(dest));
     if inside {
-        bail!("cannot remove lane {name} from inside it; cd out first");
+        std::env::set_current_dir(&root)?;
     }
 
     let refname = format!("refs/heads/{name}");
@@ -696,7 +698,7 @@ pub fn remove(name: &str) -> Result<()> {
     }
     // Covers `-d`/`-D` and every lane `--prune` actually removes, since both call this.
     crate::cache::invalidate();
-    Ok(())
+    Ok(inside)
 }
 
 fn tracked_changes(status: &str) -> Vec<String> {

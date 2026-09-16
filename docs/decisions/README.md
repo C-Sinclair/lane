@@ -31,3 +31,4 @@ try, and why it stopped.
 | [ADR-014](adr-014-a-lane-name-adopts-a-matching-upstream-branch.md) | A lane name adopts a matching upstream branch | accepted | A name matching exactly one remote-tracking branch branches from it and tracks it; two matches is an error. |
 | [ADR-015](adr-015-lane-membership-is-by-location.md) | Lane membership is by location | accepted | A lane is a worktree under `.lane/trees/`; foreign worktrees are not lanes and `--prune` cannot touch them. |
 | [ADR-016](adr-016-the-disk-estimate-is-opt-in.md) | The DISK estimate is opt-in | accepted | The tree walk is ~all of a cold `-g`; `-g` skips it and `--disk` opts in, absent rather than zero in JSON. |
+| [ADR-017](adr-017-deleting-the-lane-you-are-standing-in.md) | Deleting the lane you are standing in | accepted | `remove` chdirs to the main root rather than refusing; `-d` reports on stderr and prints the destination for the shell to follow. |

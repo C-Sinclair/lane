@@ -200,6 +200,7 @@ fn prune(dry_run: bool) -> Result<i32> {
 
     let mut removed = 0;
     let mut skipped = 0;
+    let mut stranded = false;
     for lane in lanes {
         let name = lane.name.clone();
         if !wt::landed(&root, &trunk, &lane.branch) {
@@ -216,9 +217,17 @@ fn prune(dry_run: bool) -> Result<i32> {
             removed += 1;
             continue;
         }
-        wt::remove(&name)?;
+        if wt::remove(&name)? {
+            stranded = true;
+        }
         println!("removed {name}");
         removed += 1;
+    }
+
+    // Unlike `-d`, prune's stdout is its report, so it has nowhere to put a destination
+    // for the shell function to read. Say so instead.
+    if stranded {
+        eprintln!("note: the lane you were standing in is gone; run `lane -e`");
     }
 
     if removed == 0 && skipped == 0 {
@@ -263,7 +272,10 @@ fn exit() -> Result<i32> {
     move_to(&wt::main_root()?)
 }
 
-fn delete_one(name: &str, force: bool) -> Result<i32> {
+/// The report goes to stderr so stdout is free to carry a destination, the way `new` and
+/// `enter` already split them. Returns the exit code and whether the removal moved this
+/// process out of the lane the caller was standing in.
+fn delete_one(name: &str, force: bool) -> Result<(i32, bool)> {
     let root = wt::main_root()?;
     if !force {
         let trunk = wt::trunk_name(&root);
@@ -272,28 +284,41 @@ fn delete_one(name: &str, force: bool) -> Result<i32> {
         if !losses.is_empty() {
             eprintln!("kept lane {name}: {}", losses.join(", "));
             eprintln!("  lane -D {name}   to discard it anyway");
-            return Ok(1);
+            return Ok((1, false));
         }
     }
-    wt::remove(name)?;
-    println!("removed lane {name}");
-    Ok(0)
+    let inside = wt::remove(name)?;
+    eprintln!("removed lane {name}");
+    Ok((0, inside))
 }
 
 /// `-d`/`-D`: process each name in order, reporting per name; exit non-zero if
 /// any was kept.
+///
+/// Deleting the lane you are standing in is allowed, and prints the main root on stdout so
+/// the shell function moves you there. Every other delete prints nothing on stdout, which
+/// is what tells that function to leave the shell where it is.
 fn delete(names: &[String], force: bool) -> Result<i32> {
     let mut kept = false;
+    let mut stranded = false;
     for name in names {
-        if delete_one(name, force)? != 0 {
+        let (code, inside) = delete_one(name, force)?;
+        if code != 0 {
             kept = true;
         }
+        if inside {
+            stranded = true;
+        }
+    }
+    if stranded {
+        return move_to(&wt::main_root()?).map(|_| i32::from(kept));
     }
     Ok(i32::from(kept))
 }
 
-// cd for a bare name and for `--exit`; every other flag, and no args at all,
-// must not cd.
+// cd for a bare name, for `--exit`, and for a `-d`/`-D` that removed the lane the shell
+// was standing in — that one prints a destination only in that case, so an empty capture
+// means stay put. Every other flag, and no args at all, must not cd.
 fn shellenv(shell: args::Shell) -> Result<i32> {
     match shell {
         args::Shell::Fish => println!(
@@ -302,6 +327,11 @@ fn shellenv(shell: args::Shell) -> Result<i32> {
     case '-e' '--exit'
       set -l p (command lane $argv); or return
       cd $p
+    case '-d' '-D' '--delete' '--force-delete'
+      set -l p (command lane $argv)
+      set -l code $status
+      test -n "$p"; and cd $p
+      return $code
     case '' '-*'
       command lane $argv
     case '*'
@@ -315,6 +345,10 @@ end"#
   local p
   case "$1" in
     -e|--exit) p=$(command lane "$@") || return; cd "$p" ;;
+    -d|-D|--delete|--force-delete)
+      p=$(command lane "$@"); local code=$?
+      [ -n "$p" ] && cd "$p"
+      return $code ;;
     ""|-*)  command lane "$@" ;;
     *)      p=$(command lane "$@") || return; cd "$p" ;;
   esac
