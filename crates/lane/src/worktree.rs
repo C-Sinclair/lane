@@ -294,6 +294,25 @@ pub fn list_lanes(root: &Path) -> Vec<Lane> {
     lanes
 }
 
+/// The checkout that already holds a branch, if any.
+///
+/// git allows a branch in one working tree at a time, so `git worktree add` on a branch
+/// checked out elsewhere fails outright. Finding that checkout first lets `lane <name>`
+/// take the caller there instead of reporting the collision as an error.
+pub fn checkout_holding(root: &Path, branch: &str) -> Option<PathBuf> {
+    let wanted = format!("refs/heads/{branch}");
+    let out = try_git(&["worktree", "list", "--porcelain"], Some(root));
+    let mut path: Option<PathBuf> = None;
+    for line in out.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            path = Some(PathBuf::from(value));
+        } else if line.strip_prefix("branch ") == Some(wanted.as_str()) {
+            return path;
+        }
+    }
+    None
+}
+
 pub struct Created {
     pub path: PathBuf,
     pub stats: cow::CloneStats,

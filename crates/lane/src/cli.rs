@@ -91,24 +91,49 @@ fn new(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// Flags that only make sense while a lane is being created, given the reason no lane is
+/// being created this time.
+fn reject_create_flags(reason: &str, base: Option<&str>, dirty: bool) -> Result<()> {
+    let mut conflicts = Vec::new();
+    if base.is_some() {
+        conflicts.push("--base");
+    }
+    if dirty {
+        conflicts.push("--dirty");
+    }
+    if conflicts.is_empty() {
+        return Ok(());
+    }
+    let verb = if conflicts.len() == 1 { "applies" } else { "apply" };
+    bail!(
+        "{reason}; {} only {verb} when creating a lane",
+        conflicts.join(" and ")
+    )
+}
+
 /// `lane <name>`: enter it if it exists, otherwise create it as before.
 fn open(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
     let root = wt::main_root()?;
     if lane_named(&root, name).is_ok() {
-        let mut conflicts = Vec::new();
-        if base.is_some() {
-            conflicts.push("--base");
-        }
-        if dirty {
-            conflicts.push("--dirty");
-        }
-        if !conflicts.is_empty() {
-            bail!(
-                "lane {name} already exists; {} only apply when creating a lane",
-                conflicts.join(" and ")
-            );
-        }
+        reject_create_flags(&format!("lane {name} already exists"), base, dirty)?;
         return enter(name);
+    }
+    // git refuses a second working tree on the same branch, and a branch checked out in
+    // the main tree or in another tool's worktree is the common way to hit that. The
+    // caller asked to work on this branch, and that checkout is where the branch is, so
+    // take them there and say where they landed.
+    if let Some(path) = wt::checkout_holding(&root, name) {
+        reject_create_flags(&format!("branch {name} is checked out already"), base, dirty)?;
+        let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let place = if canonical(&path) == canonical(&root) {
+            "the main worktree".to_string()
+        } else if let Ok(lane) = path.strip_prefix(wt::lanes_dir(&root)) {
+            format!("lane {}", lane.display())
+        } else {
+            format!("the worktree at {}", path.display())
+        };
+        eprintln!("note: branch {name} is checked out in {place}; moving you there");
+        return move_to(&path);
     }
     new(name, base, dirty)
 }

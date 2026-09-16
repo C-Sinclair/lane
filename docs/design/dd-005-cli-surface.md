@@ -43,6 +43,26 @@ Choosing the operation by flag instead makes every bare word a lane name, full s
 lane may be named anything, including words that used to be commands, with no precedence
 rule and no typo guard required.
 
+## What `lane <name>` resolves to
+
+`lane <name>` picks one of three destinations, in this order:
+
+1. A lane directory at `.lane/trees/<name>` — enter it.
+2. Any other working tree of this repository that has `<name>` checked out — print a note
+   naming that checkout and move there. This covers the main worktree, a lane created
+   under a different directory name, and worktrees another tool added.
+3. Otherwise create the lane, adopting an existing local branch or a single matching
+   remote branch when there is one.
+
+Case 2 exists because git allows a branch in one working tree at a time, so
+`git worktree add` on a checked-out branch fails outright. `worktree::checkout_holding`
+reads `git worktree list --porcelain` and finds that checkout before the failure can
+happen. Asking for a branch someone is already standing on is a request to work on that
+branch, and the checkout holding it is where that work happens.
+
+`--base` and `--dirty` only apply while a lane is being created, so both cases 1 and 2
+reject them rather than accepting a flag that would do nothing.
+
 ## Parsing and completion
 
 `crates/lane/src/args.rs` owns the complete parser surface as one `Parsed` enum; `help.rs`

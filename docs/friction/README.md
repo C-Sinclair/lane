@@ -23,3 +23,4 @@ gotchas worth remembering on their own, with nothing else to link.
 | [FR-008](FR-008-ignored-entries-collapse-above-the-lanes-directory.md) | Ignored entries collapse above the lanes directory; lanes cloned each other | [DD-001](../design/dd-001-cow-clone.md), [DD-002](../design/dd-002-worktree-lifecycle.md) |
 | [FR-009](FR-009-every-worktree-looked-like-a-lane.md) | Every worktree looked like a lane; `--prune` would have deleted them | [ADR-015](../decisions/adr-015-lane-membership-is-by-location.md) |
 | [FR-010](FR-010-making-a-json-field-optional-broke-a-consumer.md) | Making a `--json` field optional broke a consumer instantly and silently | Rollout practice; no design change |
+| [FR-011](FR-011-a-branch-checked-out-elsewhere-failed-the-lane.md) | A branch checked out in another worktree failed `lane <name>` | [DD-005](../design/dd-005-cli-surface.md) |
