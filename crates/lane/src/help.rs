@@ -84,6 +84,9 @@ const ROOT: &str = "
     $ lane -d fix-login old-spike
     $ gh pr view 103 --json headRefName -q .headRefName | lane
                                   A bare lane opens the name piped on stdin
+    $ lane '#103'                 Pull request 103's branch, via gh (quote the #)
+    $ lane https://github.com/<owner>/<repo>/issues/42
+                                  The issue's linked branch, or 42-<title>
     $ lane -g                     Every lane across every repository lane knows about
     $ lane -g --refresh           Same, but recomputed rather than served from cache
     $ lane -i fix-login           Detail on that lane, from anywhere in the repo
@@ -92,4 +95,5 @@ const ROOT: &str = "
 
   A lane may be named anything, including ls or prune.
   With no name on the command line, lane, -d, -D and -i read names from a piped stdin, one per line.
+  A name of #<n>, a pull request URL or an issue URL is resolved to its branch through gh.
 ";

@@ -102,6 +102,23 @@ take a single name. When stdin is a terminal, empty, or silent for five seconds,
 because bash runs the last command of a pipeline in a subshell. Use `lane "$(…)"` there. zsh
 and fish move you either way.
 
+A pull request or issue can stand in for its branch name. Lane asks the [GitHub
+CLI](https://cli.github.com) (`gh`) which branch it means:
+
+```sh
+$ lane '#103'                                        # pull request 103 in this repository
+$ lane https://github.com/acme/widgets/pull/103      # the same, by URL
+$ lane https://github.com/acme/widgets/issues/42     # the issue's linked branch
+```
+
+Quote `#103`: in bash, zsh and fish an unquoted `#` starts a comment, and the shell runs a
+bare `lane` instead. A pull request's branch is fetched from origin first, so the lane
+starts on its commits and tracks it. A pull request from a fork is refused, because its
+branch is not on origin; use `gh pr checkout` for those. An issue with no linked branch gets
+the name GitHub would give one, `42-<title-slug>`, without creating anything on GitHub. A
+URL for a repository other than origin's is an error. References work with `-d`, `-D` and
+`-i` too, and when piped on stdin.
+
 `lane`, or `lane --list`/`-l`, lists each lane's state (`open`, `pushed`, or `landed`) and
 worktree status; add `--json` for machine-readable output (with or without `--list`).
 
