@@ -104,7 +104,11 @@ fn reject_create_flags(reason: &str, base: Option<&str>, dirty: bool) -> Result<
     if conflicts.is_empty() {
         return Ok(());
     }
-    let verb = if conflicts.len() == 1 { "applies" } else { "apply" };
+    let verb = if conflicts.len() == 1 {
+        "applies"
+    } else {
+        "apply"
+    };
     bail!(
         "{reason}; {} only {verb} when creating a lane",
         conflicts.join(" and ")
@@ -123,7 +127,11 @@ fn open(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
     // caller asked to work on this branch, and that checkout is where the branch is, so
     // take them there and say where they landed.
     if let Some(path) = wt::checkout_holding(&root, name) {
-        reject_create_flags(&format!("branch {name} is checked out already"), base, dirty)?;
+        reject_create_flags(
+            &format!("branch {name} is checked out already"),
+            base,
+            dirty,
+        )?;
         let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let place = if canonical(&path) == canonical(&root) {
             "the main worktree".to_string()
