@@ -20,7 +20,7 @@ fn bold(text: &str, tty: bool) -> String {
 pub fn run() -> Result<i32> {
     // A usage error is the reader's, not the program's: it exits 2, the way a
     // command line has always distinguished "you typed it wrong" from "it failed".
-    let parsed = match args::parse(std::env::args_os().skip(1).collect()) {
+    let parsed = match args::parse_with(std::env::args_os().skip(1).collect(), piped_names) {
         Ok(parsed) => parsed,
         Err(err) => {
             eprintln!("error: {err:#}");
@@ -52,6 +52,40 @@ pub fn run() -> Result<i32> {
         Parsed::Shellenv(shell) => shellenv(shell),
         Parsed::Completions(shell) => completions(shell),
     }
+}
+
+/// How long a bare `lane` waits on a piped stdin that has neither data nor a closed
+/// writer. Long enough for a `gh pr view | jq` producer to answer over the network; short
+/// enough that a caller holding stdin open without ever writing, as background job runners
+/// do, gets its listing rather than a hang.
+const PIPE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Names piped to lane, as `gh pr view --json headRefName -q .headRefName | lane` pipes
+/// one. A terminal on stdin is never read, so an interactive `lane` cannot block waiting
+/// for input. A stdin that yields no names within [`PIPE_WAIT`], or at all, reads as none,
+/// so `lane < /dev/null` still lists.
+fn piped_names() -> Vec<String> {
+    let mut stdin = std::io::stdin();
+    if stdin.is_terminal() || !readable_within(&stdin, PIPE_WAIT) {
+        return Vec::new();
+    }
+    let mut text = String::new();
+    match std::io::Read::read_to_string(&mut stdin, &mut text) {
+        Ok(_) => args::names_from(&text),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Whether a read would return without blocking: data waiting, or the writer gone. A file
+/// or `/dev/null` answers at once.
+fn readable_within(stdin: &std::io::Stdin, wait: std::time::Duration) -> bool {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let timeout = Timespec {
+        tv_sec: wait.as_secs() as _,
+        tv_nsec: wait.subsec_nanos() as _,
+    };
+    let mut fds = [PollFd::new(stdin, PollFlags::IN)];
+    matches!(poll(&mut fds, Some(&timeout)), Ok(ready) if ready > 0)
 }
 
 fn init() -> Result<i32> {
@@ -351,7 +385,11 @@ fn delete(names: &[String], force: bool) -> Result<i32> {
 
 // cd for a bare name, for `--exit`, and for a `-d`/`-D` that removed the lane the shell
 // was standing in — that one prints a destination only in that case, so an empty capture
-// means stay put. Every other flag, and no args at all, must not cd.
+// means stay put. No args at all cds only when stdin is piped and lane printed a single
+// directory, which is `lane` opening a name read from stdin; a listing is echoed back.
+// Every other flag must not cd. Fish gives a command substitution the shell's stdin rather
+// than the function's, so the fish branches that may read names capture through
+// `| read -z` instead, which leaves lane itself reading the function's stdin.
 fn shellenv(shell: args::Shell) -> Result<i32> {
     match shell {
         args::Shell::Fish => println!(
@@ -361,11 +399,26 @@ fn shellenv(shell: args::Shell) -> Result<i32> {
       set -l p (command lane $argv); or return
       cd $p
     case '-d' '-D' '--delete' '--force-delete'
-      set -l p (command lane $argv)
-      set -l code $status
+      command lane $argv | read -lz p
+      set -l code $pipestatus[1]
+      set p (string trim -- $p)
       test -n "$p"; and cd $p
       return $code
-    case '' '-*'
+    case ''
+      if isatty stdin
+        command lane $argv
+        return
+      end
+      command lane $argv | read -lz out
+      set -l code $pipestatus[1]
+      set -l lines (string split -n \n -- $out)
+      if test (count $lines) -eq 1; and test -d "$lines[1]"
+        cd $lines[1]
+      else if test (count $lines) -gt 0
+        printf '%s\n' $lines
+      end
+      return $code
+    case '-*'
       command lane $argv
     case '*'
       set -l p (command lane $argv); or return
@@ -382,7 +435,12 @@ end"#
       p=$(command lane "$@"); local code=$?
       [ -n "$p" ] && cd "$p"
       return $code ;;
-    ""|-*)  command lane "$@" ;;
+    "")
+      [ -t 0 ] && {{ command lane "$@"; return; }}
+      p=$(command lane "$@"); local code=$?
+      if [ -d "$p" ]; then cd "$p"; elif [ -n "$p" ]; then printf '%s\n' "$p"; fi
+      return $code ;;
+    -*)     command lane "$@" ;;
     *)      p=$(command lane "$@") || return; cd "$p" ;;
   esac
 }}"#

@@ -482,3 +482,107 @@ fn a_dashed_name_is_still_reachable_after_a_terminator() {
         })
     );
 }
+
+fn piped(words: &[&str], names: &[&str]) -> Result<Parsed> {
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    parse_with(words.iter().map(OsString::from).collect(), || names)
+}
+
+#[test]
+fn a_bare_lane_opens_the_one_name_on_stdin() {
+    assert_eq!(
+        piped(&[], &["fix-login"]).unwrap(),
+        Parsed::Open(OpenArgs {
+            name: "fix-login".into(),
+            base: None,
+            dirty: false
+        })
+    );
+    assert_eq!(
+        piped(&["--base", "main"], &["hotfix"]).unwrap(),
+        Parsed::Open(OpenArgs {
+            name: "hotfix".into(),
+            base: Some("main".into()),
+            dirty: false
+        })
+    );
+}
+
+#[test]
+fn a_bare_lane_with_nothing_on_stdin_still_lists() {
+    assert_eq!(
+        piped(&[], &[]).unwrap(),
+        Parsed::List {
+            json: false,
+            global: false,
+            refresh: false,
+            disk: false
+        }
+    );
+}
+
+#[test]
+fn opening_refuses_more_than_one_piped_name() {
+    let message = format!("{:#}", piped(&[], &["a", "b"]).unwrap_err());
+    assert!(message.contains("stdin held 2"), "{message}");
+    let message = format!("{:#}", piped(&["-i"], &["a", "b"]).unwrap_err());
+    assert!(message.contains("stdin held 2"), "{message}");
+}
+
+#[test]
+fn delete_takes_every_piped_name() {
+    assert_eq!(
+        piped(&["-D"], &["a", "b"]).unwrap(),
+        Parsed::Delete(DeleteArgs {
+            names: vec!["a".into(), "b".into()],
+            force: true
+        })
+    );
+    assert!(err(&["-d"]).contains("<NAME>..."));
+}
+
+#[test]
+fn info_takes_a_piped_name_and_falls_back_to_the_current_lane() {
+    assert_eq!(
+        piped(&["-i"], &["spike"]).unwrap(),
+        Parsed::Info {
+            name: Some("spike".into()),
+            json: false
+        }
+    );
+    assert_eq!(
+        piped(&["-i", "--json"], &[]).unwrap(),
+        Parsed::Info {
+            name: None,
+            json: true
+        }
+    );
+}
+
+#[test]
+fn names_on_the_command_line_leave_stdin_unread() {
+    for words in [
+        &["fix-login"][..],
+        &["-d", "a"],
+        &["-i", "a"],
+        &["-l"],
+        &["--json"],
+        &["-g"],
+        &["--prune"],
+        &["--shellenv", "fish"],
+        &["--exit"],
+    ] {
+        let parsed = parse_with(words.iter().map(OsString::from).collect(), || {
+            panic!("read stdin for {words:?}")
+        });
+        assert!(parsed.is_ok(), "{words:?}");
+    }
+}
+
+#[test]
+fn piped_text_is_trimmed_unquoted_and_blank_lines_dropped() {
+    assert_eq!(names_from("fix-login\n"), ["fix-login"]);
+    assert_eq!(names_from("  \"feat/x\"  \r\n\n\nb\n"), ["feat/x", "b"]);
+    assert_eq!(names_from("\"\"\n   \n"), Vec::<String>::new());
+    assert_eq!(names_from("\"half"), ["\"half"]);
+}

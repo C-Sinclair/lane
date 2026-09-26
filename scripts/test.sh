@@ -4,6 +4,9 @@
 # --shellenv, --completions). The clone layer and anchor-free worktree logic are
 # covered in depth by `cargo test`.
 set -uo pipefail
+# A bare `lane` reads names from a piped stdin. Whoever ran this suite may have left an
+# open pipe there, so give every invocation a closed one unless a check pipes its own.
+exec < /dev/null
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cargo build --quiet --manifest-path "$ROOT/crates/lane/Cargo.toml" || exit 1
@@ -260,8 +263,10 @@ is "and in the fish wrapper's cd branch" \
    "$("$LANE" --shellenv fish | grep -c -- "case '-e' '--exit'")" "1"
 is "--exit is matched before the general dash case" \
    "$("$LANE" --shellenv | grep -c -- '--exit)')" "1"
-is "an empty or dashed first word never cds" \
-   "$("$LANE" --shellenv | grep -c '""|-\*)')" "1"
+is "a dashed first word never cds" \
+   "$("$LANE" --shellenv | grep -c '^    -\*)')" "1"
+is "an empty first word cds only for a piped stdin" \
+   "$("$LANE" --shellenv | grep -c '\[ -t 0 \] && { command lane')" "1"
 
 echo "== 9. -d/-D refuse before they destroy, and -D means everything =="
 setup
@@ -625,6 +630,54 @@ is "and it is still checked out afterwards" \
    "$([ -f .wt/foreign/src/auth.rs ] && echo yes || echo no)" "yes"
 is "with its branch intact" \
    "$(git rev-parse --verify --quiet refs/heads/foreign > /dev/null; echo $?)" "0"
+
+echo "== 21. names piped on stdin =="
+setup
+is "a name piped to a bare lane creates it" \
+   "$(echo piped-one | "$LANE" 2>/dev/null)" "$(pwd -P)/.lane/trees/piped-one"
+is "a quoted name, as jq prints without -r, loses its quotes" \
+   "$(echo '"piped-one"' | "$LANE" 2>/dev/null)" "$(pwd -P)/.lane/trees/piped-one"
+is "an empty stdin still lists" \
+   "$("$LANE" < /dev/null | awk '{print $1}')" "piped-one"
+is "blank lines alone still list" \
+   "$(printf '\n  \n' | "$LANE" | awk '{print $1}')" "piped-one"
+is "two piped names are refused for a bare lane" \
+   "$(printf 'a\nb\n' | "$LANE" > /dev/null 2>&1; echo $?)" "2"
+"$LANE" piped-two > /dev/null 2>&1
+is "-d removes every piped name" \
+   "$(printf 'piped-one\npiped-two\n' | "$LANE" -d 2>&1 | grep -c '^removed lane')" "2"
+is "-d with nothing piped still asks for a name" \
+   "$("$LANE" -d < /dev/null > /dev/null 2>&1; echo $?)" "2"
+"$LANE" piped-info > /dev/null 2>&1
+is "-i describes the piped name" \
+   "$(echo piped-info | "$LANE" -i | awk '$1 == "lane" { print $2 }')" "piped-info"
+
+BINDIR="$(dirname "$LANE")"
+POSIXRC="export PATH=\"$BINDIR:\$PATH\"; eval \"\$(lane --shellenv posix)\""
+is "the bash wrapper lists for an empty stdin" \
+   "$(bash -c "$POSIXRC; lane < /dev/null" | grep -c piped-info)" "1"
+is "the bash wrapper cds for a substituted name" \
+   "$(bash -c "$POSIXRC; lane \"\$(echo piped-info)\" > /dev/null 2>&1; pwd -P")" \
+   "$(cd .lane/trees/piped-info && pwd -P)"
+ZSH="$(command -v zsh || true)"
+if [ -n "$ZSH" ]; then
+  is "the zsh wrapper cds as the last element of a pipeline" \
+     "$("$ZSH" -c "$POSIXRC; echo piped-info | lane > /dev/null 2>&1; pwd -P")" \
+     "$(cd .lane/trees/piped-info && pwd -P)"
+  is "and lists for an empty stdin" \
+     "$("$ZSH" -c "$POSIXRC; lane < /dev/null" | grep -c piped-info)" "1"
+else
+  echo "  zsh not found, skipping its pipeline checks"
+fi
+if [ -x "$FISH" ]; then
+  is "the fish wrapper cds as the last element of a pipeline" \
+     "$("$FISH" -c "$fishrc; echo piped-info | lane > /dev/null 2>&1; pwd -P")" \
+     "$(cd .lane/trees/piped-info && pwd -P)"
+  is "and lists for an empty stdin" \
+     "$("$FISH" -c "$fishrc; lane < /dev/null" | grep -c piped-info)" "1"
+  is "and deletes piped names with -d" \
+     "$("$FISH" -c "$fishrc; echo piped-info | lane -d" 2>&1 | grep -c '^removed lane piped-info')" "1"
+fi
 
 echo
 echo "$pass passed, $fail failed"

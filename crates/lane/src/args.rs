@@ -7,6 +7,10 @@
 //! like, which is what lets a lane be named `-x`. With no operation flag and no
 //! name, `lane` lists. With no operation flag and one name, `lane <name>`
 //! enters it, creating it first if it does not exist.
+//!
+//! [`parse_with`] also takes names piped on stdin, as a closure it calls only
+//! when an operation that wants a name was given none. The caller owns reading
+//! stdin, so the parser still never touches the process.
 
 use crate::help::Help;
 use anyhow::Result;
@@ -124,6 +128,16 @@ enum Selected {
 /// assert_eq!(parsed, Parsed::Exit);
 /// ```
 pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
+    parse_with(raw, Vec::new)
+}
+
+/// [`parse`], with `piped` supplying names when the command line has none.
+///
+/// `piped` is called at most once, and only for a bare `lane` (which becomes
+/// `lane <name>` when it yields a name and still lists when it yields none),
+/// `--base`/`--dirty` without a name, `-d`/`-D` without names, and `-i`
+/// without a name. Listing flags such as `-l` or `--json` never read it.
+pub fn parse_with(raw: Vec<OsString>, piped: impl FnOnce() -> Vec<String>) -> Result<Parsed> {
     let (flags, after) = terminated(raw);
     let mut pargs = pico_args::Arguments::from_vec(flags);
 
@@ -151,7 +165,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
     let refresh = pargs.contains("--refresh");
     let disk = pargs.contains("--disk");
 
-    let positionals = positionals(pargs, after, Help::Root)?;
+    let mut positionals = positionals(pargs, after, Help::Root)?;
 
     let mut ops = Vec::new();
     if list {
@@ -185,7 +199,7 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
         return Err(conflict(a.flag(), b.flag(), Help::Root));
     }
 
-    let selected = match ops.first() {
+    let mut selected = match ops.first() {
         Some(Op::List) => Selected::List,
         Some(Op::Delete) => Selected::Delete,
         Some(Op::ForceDelete) => Selected::ForceDelete,
@@ -198,6 +212,20 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
         None if positionals.is_empty() && base.is_none() && !dirty => Selected::List,
         None => Selected::Open,
     };
+
+    let bare = !list && !json && !global && !refresh && !disk && !dry_run;
+    let wants_piped = positionals.is_empty()
+        && match selected {
+            Selected::List => bare && ops.is_empty(),
+            Selected::Open | Selected::Delete | Selected::ForceDelete | Selected::Info => true,
+            _ => false,
+        };
+    if wants_piped {
+        positionals = piped();
+        if selected == Selected::List && !positionals.is_empty() {
+            selected = Selected::Open;
+        }
+    }
 
     // Each modifier belongs to exactly one operation; anywhere else it is a
     // usage error rather than something silently ignored.
@@ -259,6 +287,9 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
             Parsed::Completions(shell)
         }
         Selected::Info => {
+            if wants_piped && positionals.len() > 1 {
+                return Err(piped_many("lane -i", positionals.len()));
+            }
             let name = optional_one(positionals, Help::Root)?;
             Parsed::Info { name, json }
         }
@@ -284,11 +315,31 @@ pub fn parse(raw: Vec<OsString>) -> Result<Parsed> {
             }
         }
         Selected::Open => {
+            if wants_piped && positionals.len() > 1 {
+                return Err(piped_many("lane", positionals.len()));
+            }
             let name = one(positionals, "<NAME>", Help::Root)?;
             Parsed::Open(OpenArgs { name, base, dirty })
         }
     };
     Ok(parsed)
+}
+
+/// The names in text piped to lane: one per line, surrounding whitespace
+/// trimmed, blank lines dropped, and a pair of surrounding double quotes
+/// removed so `jq` output without `-r` still names the branch.
+pub fn names_from(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .map(
+            |line| match line.strip_prefix('"').and_then(|l| l.strip_suffix('"')) {
+                Some(inner) => inner.trim(),
+                None => line,
+            },
+        )
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// Split at a bare `--`. Nothing after it is read as a flag, by pico-args or by
@@ -419,6 +470,12 @@ fn conflict(a: &str, b: &str, help: Help) -> anyhow::Error {
         "{a} cannot be combined with {b}\n\nUsage: {}\n\nFor more information, try '{} --help'.",
         help.usage(),
         help.invocation()
+    )
+}
+
+fn piped_many(command: &str, count: usize) -> anyhow::Error {
+    anyhow::anyhow!(
+        "`{command}` takes one name, but stdin held {count}\n\n  tip: `lane -d` and `lane -D` accept several names, one per line"
     )
 }
 
