@@ -80,6 +80,21 @@ without writing. A name on the command line always wins, and stdin is then never
 the parser stays pure and `tests/args.rs` drives it without a process. `args::names_from`
 trims each line, drops blank ones, and removes a surrounding pair of double quotes.
 
+## GitHub references
+
+A name of `#103`, `https://github.com/<owner>/<repo>/pull/<n>` or
+`https://github.com/<owner>/<repo>/issues/<n>` is resolved to a branch before anything else
+sees it ([ADR-019](../decisions/adr-019-github-references-as-lane-names.md)). This applies
+to open, `-d`/`-D` and `-i`, and to names read from stdin. `github::parse_reference`
+recognises the forms and is pure. `github::resolve` checks the reference against origin's
+repository and asks `gh`: a pull request's `headRefName`, or an issue's first linked branch,
+or else `<n>-<title slug>` from `github::issue_branch_name`. `cli::branch_for` prints `note:
+#103 is branch <name>` to stderr.
+
+A pull request's branch, and an issue's linked branch, are fetched from origin before the
+lane is created, so the upstream adoption in the destination list above finds them. `#103`
+needs quoting in every shell lane supports, since an unquoted `#` starts a comment.
+
 ## Parsing and completion
 
 `crates/lane/src/args.rs` owns the complete parser surface as one `Parsed` enum; `help.rs`

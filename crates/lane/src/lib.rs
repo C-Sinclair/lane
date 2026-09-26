@@ -3,6 +3,7 @@ pub mod cache;
 pub mod cli;
 pub mod cow;
 pub mod git;
+pub mod github;
 pub mod global;
 pub mod help;
 pub mod info;

@@ -679,6 +679,69 @@ if [ -x "$FISH" ]; then
      "$("$FISH" -c "$fishrc; echo piped-info | lane -d" 2>&1 | grep -c '^removed lane piped-info')" "1"
 fi
 
+echo "== 22. GitHub references resolve through gh =="
+setup
+remote_setup
+git push -q origin main
+for b in pr-branch fork-branch linked-42; do
+  git checkout -qb "$b"
+  echo "$b" > "$b.txt" && git add -A && git commit -qm "work on $b"
+  git push -q origin "$b"
+  git checkout -q main
+  git branch -qD "$b"
+  git update-ref -d "refs/remotes/origin/$b"
+done
+# origin says GitHub, as gh needs, while fetches still reach the local bare repository.
+git config remote.origin.url https://github.com/acme/widgets.git
+git config "url.$TMP/origin.git.insteadOf" https://github.com/acme/widgets.git
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/gh" <<'EOF_GH'
+#!/usr/bin/env bash
+case "$*" in
+  "pr view 7 -R acme/widgets --json headRefName,isCrossRepository")
+    echo '{"headRefName":"pr-branch","isCrossRepository":false}' ;;
+  "pr view 8 -R acme/widgets --json headRefName,isCrossRepository")
+    echo '{"headRefName":"fork-branch","isCrossRepository":true}' ;;
+  "issue develop --list 42 -R acme/widgets") printf 'linked-42\thttps://github.com/acme/widgets/tree/linked-42\n' ;;
+  "issue develop --list 43 -R acme/widgets") ;;
+  "issue view 43 -R acme/widgets --json title -q .title") echo 'Fix the Login bug!' ;;
+  *) echo "GraphQL: Could not resolve to a PullRequest ($*)" >&2; exit 1 ;;
+esac
+EOF_GH
+chmod +x "$TMP/fakebin/gh"
+GHPATH="$TMP/fakebin:$PATH"
+
+is "#7 opens the pull request's branch" \
+   "$(PATH="$GHPATH" "$LANE" '#7' 2>/dev/null)" "$(pwd -P)/.lane/trees/pr-branch"
+is "fetched from origin, with the published commit" \
+   "$(git -C .lane/trees/pr-branch log --oneline -1 --format=%s)" "work on pr-branch"
+is "and tracking it" \
+   "$(git -C .lane/trees/pr-branch rev-parse --abbrev-ref '@{upstream}')" "origin/pr-branch"
+is "the note names the branch a reference resolved to" \
+   "$(PATH="$GHPATH" "$LANE" '#7' 2>&1 >/dev/null | grep -c '^note: #7 is branch pr-branch')" "1"
+is "a pull request URL enters the same lane" \
+   "$(PATH="$GHPATH" "$LANE" https://github.com/acme/widgets/pull/7/files 2>/dev/null)" "$(pwd -P)/.lane/trees/pr-branch"
+is "a reference piped on stdin resolves too" \
+   "$(echo '#7' | PATH="$GHPATH" "$LANE" 2>/dev/null)" "$(pwd -P)/.lane/trees/pr-branch"
+is "a URL for another repository is refused" \
+   "$(PATH="$GHPATH" "$LANE" https://github.com/other/thing/pull/7 2>&1 | grep -c 'belongs to other/thing, but this repository.s origin is acme/widgets')" "1"
+is "a pull request from a fork is refused" \
+   "$(PATH="$GHPATH" "$LANE" '#8' 2>&1 | grep -c 'comes from a fork')" "1"
+is "and creates no lane" "$([ -d .lane/trees/fork-branch ] && echo yes || echo no)" "no"
+is "a failed lookup names the reference" \
+   "$(PATH="$GHPATH" "$LANE" '#99' 2>&1 | grep -c '^error: gh could not resolve #99: GraphQL')" "1"
+is "an issue with a linked branch opens that branch" \
+   "$(PATH="$GHPATH" "$LANE" https://github.com/acme/widgets/issues/42 2>/dev/null)" "$(pwd -P)/.lane/trees/linked-42"
+is "an issue without one gets GitHub's default name" \
+   "$(PATH="$GHPATH" "$LANE" https://github.com/acme/widgets/issues/43 2>/dev/null)" "$(pwd -P)/.lane/trees/43-fix-the-login-bug"
+is "which is not created on the remote" \
+   "$(git ls-remote "$TMP/origin.git" 43-fix-the-login-bug | wc -l | tr -d ' ')" "0"
+mkdir -p "$TMP/nogh" && ln -sf "$(command -v git)" "$TMP/nogh/git"
+is "without gh the error names the reference and the missing CLI" \
+   "$(PATH="$TMP/nogh" "$LANE" '#7' 2>&1 | grep -c 'resolving #7 needs the GitHub CLI (gh)')" "1"
+is "-d takes a reference" \
+   "$(PATH="$GHPATH" "$LANE" -d '#7' 2>&1 | grep -c '^removed lane pr-branch')" "1"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

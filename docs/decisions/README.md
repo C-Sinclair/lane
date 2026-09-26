@@ -33,3 +33,4 @@ try, and why it stopped.
 | [ADR-016](adr-016-the-disk-estimate-is-opt-in.md) | The DISK estimate is opt-in | accepted | The tree walk is ~all of a cold `-g`; `-g` skips it and `--disk` opts in, absent rather than zero in JSON. |
 | [ADR-017](adr-017-deleting-the-lane-you-are-standing-in.md) | Deleting the lane you are standing in | accepted | `remove` chdirs to the main root rather than refusing; `-d` reports on stderr and prints the destination for the shell to follow. |
 | [ADR-018](adr-018-names-read-from-stdin.md) | Names read from stdin | accepted | With no name given, a bare `lane`, `-d`/`-D` and `-i` read names from a piped stdin; a terminal is never read and a silent pipe times out. |
+| [ADR-019](adr-019-github-references-as-lane-names.md) | GitHub references as lane names | accepted | `#n`, a pull request URL or an issue URL resolves to its branch through `gh`; published branches are fetched first, forks and other repositories refused. |

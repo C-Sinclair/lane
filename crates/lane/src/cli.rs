@@ -38,15 +38,28 @@ pub fn run() -> Result<i32> {
             Ok(0)
         }
         Parsed::Init => init(),
-        Parsed::Open(args) => open(&args.name, args.base.as_deref(), args.dirty),
+        Parsed::Open(args) => {
+            let (name, published) = branch_for(&args.name)?;
+            open(&name, published, args.base.as_deref(), args.dirty)
+        }
         Parsed::List {
             json,
             global,
             refresh,
             disk,
         } => list(json, global, refresh, disk),
-        Parsed::Delete(args) => delete(&args.names, args.force),
-        Parsed::Info { name, json } => crate::info::show(name.as_deref(), json),
+        Parsed::Delete(args) => {
+            let names = args
+                .names
+                .iter()
+                .map(|name| branch_for(name).map(|(branch, _)| branch))
+                .collect::<Result<Vec<_>>>()?;
+            delete(&names, args.force)
+        }
+        Parsed::Info { name, json } => {
+            let name = name.map(|name| branch_for(&name)).transpose()?;
+            crate::info::show(name.as_ref().map(|(branch, _)| branch.as_str()), json)
+        }
         Parsed::Exit => exit(),
         Parsed::Prune { dry_run } => prune(dry_run),
         Parsed::Shellenv(shell) => shellenv(shell),
@@ -149,8 +162,26 @@ fn reject_create_flags(reason: &str, base: Option<&str>, dirty: bool) -> Result<
     )
 }
 
+/// The branch a name stands for: a GitHub reference (`#103`, a pull request or issue URL)
+/// resolved through `gh`, or the name itself. The flag says whether the branch is
+/// published on origin.
+fn branch_for(text: &str) -> Result<(String, bool)> {
+    if crate::github::parse_reference(text).is_none() {
+        return Ok((text.to_string(), false));
+    }
+    let root = wt::main_root()?;
+    let Some(resolved) = crate::github::resolve(text, &root)? else {
+        return Ok((text.to_string(), false));
+    };
+    eprintln!("note: {text} is branch {}", resolved.branch);
+    Ok((resolved.branch, resolved.published))
+}
+
 /// `lane <name>`: enter it if it exists, otherwise create it as before.
-fn open(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
+///
+/// `published` fetches the branch from origin before creating a lane on it, so upstream
+/// adoption (ADR-014) finds a remote-tracking ref instead of branching fresh from HEAD.
+fn open(name: &str, published: bool, base: Option<&str>, dirty: bool) -> Result<i32> {
     let root = wt::main_root()?;
     if lane_named(&root, name).is_ok() {
         reject_create_flags(&format!("lane {name} already exists"), base, dirty)?;
@@ -176,6 +207,16 @@ fn open(name: &str, base: Option<&str>, dirty: bool) -> Result<i32> {
         };
         eprintln!("note: branch {name} is checked out in {place}; moving you there");
         return move_to(&path);
+    }
+    let local = format!("refs/heads/{name}");
+    if published
+        && base.is_none()
+        && !git::git_ok(&["rev-parse", "--verify", "--quiet", &local], Some(&root))
+    {
+        let refspec = format!("+refs/heads/{name}:refs/remotes/origin/{name}");
+        if !git::git_ok(&["fetch", "--quiet", "origin", &refspec], Some(&root)) {
+            bail!("could not fetch {name} from origin");
+        }
     }
     new(name, base, dirty)
 }
