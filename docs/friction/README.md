@@ -24,3 +24,4 @@ gotchas worth remembering on their own, with nothing else to link.
 | [FR-009](FR-009-every-worktree-looked-like-a-lane.md) | Every worktree looked like a lane; `--prune` would have deleted them | [ADR-015](../decisions/adr-015-lane-membership-is-by-location.md) |
 | [FR-010](FR-010-making-a-json-field-optional-broke-a-consumer.md) | Making a `--json` field optional broke a consumer instantly and silently | Rollout practice; no design change |
 | [FR-011](FR-011-a-branch-checked-out-elsewhere-failed-the-lane.md) | A branch checked out in another worktree failed `lane <name>` | [DD-005](../design/dd-005-cli-surface.md) |
+| [FR-012](FR-012-reading-stdin-met-three-shells-and-an-open-pipe.md) | Reading stdin hung on an open pipe, missed fish's substitution stdin, and cannot `cd` in bash | [ADR-018](../decisions/adr-018-names-read-from-stdin.md), [DD-004](../design/dd-004-shell-integration.md) |

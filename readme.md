@@ -87,6 +87,21 @@ lane creates a normal Git worktree and skips them. `--base <rev>` branches from 
 instead of the default base, and `--dirty` carries uncommitted work into the new lane. Both
 apply only on creation.
 
+With no name on the command line, `lane` reads one from stdin, so a name can come from
+another tool:
+
+```sh
+$ gh pr view 103 --json headRefName -q .headRefName | lane
+$ lane --json | jq -r '.[] | select(.state == "pushed") | .name' | lane -d
+```
+
+A bare `lane`, `-d`/`-D` and `-i` all read names this way, one per line. Surrounding
+whitespace and double quotes are stripped, so `jq` without `-r` works too. Opening and `-i`
+take a single name. When stdin is a terminal, empty, or silent for five seconds, a bare
+`lane` lists as usual. In bash, `… | lane` creates the lane but cannot move your shell,
+because bash runs the last command of a pipeline in a subshell. Use `lane "$(…)"` there. zsh
+and fish move you either way.
+
 `lane`, or `lane --list`/`-l`, lists each lane's state (`open`, `pushed`, or `landed`) and
 worktree status; add `--json` for machine-readable output (with or without `--list`).
 

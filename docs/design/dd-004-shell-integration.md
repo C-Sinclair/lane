@@ -3,7 +3,7 @@
 How `lane <name>`, `lane --exit` and `lane -d` change the calling shell's directory.
 
 - Status: current
-- Date: 2026-09-08
+- Date: 2026-09-26
 
 ## Summary
 
@@ -17,14 +17,16 @@ yourself.
 
 ## The wrapper's job is narrow
 
-Every other flag and bare `lane` with no shell-affecting operation is passed straight
-through to the real binary, unwrapped — the function only intercepts the three cases that
-can need a `cd`:
+Every other flag is passed straight through to the real binary, unwrapped — the function
+only intercepts the four cases that can need a `cd`:
 
 ```sh
 new)    p=$(command lane "$@") && cd "$p" ;;
 --exit) p=$(command lane "$@") || return; cd "$p" ;;
 -d|-D)  p=$(command lane "$@"); code=$?; [ -n "$p" ] && cd "$p"; return $code ;;
+"")     [ -t 0 ] && { command lane "$@"; return; }
+        p=$(command lane "$@"); code=$?
+        if [ -d "$p" ]; then cd "$p"; elif [ -n "$p" ]; then printf '%s\n' "$p"; fi ;;
 ```
 
 `lane` prints the destination path to stdout on success and nothing (or an error) on
@@ -37,6 +39,23 @@ report goes to stderr to keep stdout free for that path. This is why its branch 
 `lane`'s exit code rather than returning early: a lane kept back for unlanded work exits 1
 with nothing on stdout, and the caller has to see that 1. See
 [ADR-017](../decisions/adr-017-deleting-the-lane-you-are-standing-in.md).
+
+## A bare `lane` on a pipe
+
+A bare `lane` opens a name piped on stdin
+([ADR-018](../decisions/adr-018-names-read-from-stdin.md)), so `gh pr view 103 --json
+headRefName -q .headRefName | lane` has to move the shell. The empty-argument branch runs
+`lane` directly when stdin is a terminal, which keeps the listing on the terminal as before.
+On a pipe it captures stdout instead. A single line naming an existing directory is the lane
+`lane` opened, and the wrapper `cd`s there. Anything else is a listing or nothing, and the
+wrapper prints it back.
+
+The `cd` only reaches the calling shell when the wrapper runs in that shell. zsh and fish
+run the last element of a pipeline in the current shell, so `… | lane` moves you. Bash runs
+it in a subshell, so `… | lane` creates or finds the lane and prints its path, but the shell
+stays put. Bash users write `lane "$(…)"`. `shopt -s lastpipe` does not help, because it
+only applies with job control off
+([FR-012](../friction/FR-012-reading-stdin-met-three-shells-and-an-open-pipe.md)).
 
 ## What this replaced
 
@@ -63,3 +82,8 @@ sharing one script would mean writing to the lowest common denominator of both. 
 friction log (FR-005) for the two fish-specific gotchas this integration has to get right:
 quoting `switch "$argv[1]"` so an empty argv still matches, and quoting `case` patterns so a
 leading `-h` can't be parsed as a flag.
+
+The fish branches that may read names from stdin, the empty one and `-d`/`-D`, capture with
+`command lane $argv | read -lz out` rather than `(command lane $argv)`. Fish gives a command
+substitution the shell's stdin, not the function's, so the substitution never sees the pipe
+(FR-012).

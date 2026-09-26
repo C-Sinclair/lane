@@ -10,6 +10,7 @@ The complete command grammar, and why every bare word is a lane name.
 ```
 lane                                        list lanes
 lane <name> [-b|--base <rev>] [--dirty]     enter a lane, or create it
+<names> | lane [-d|-D|-i]                   the same, with names read from stdin
 lane -d|-D <name>...                        delete
 lane -g|--global [--refresh] [--disk]       list lanes across every repository
 lane --prune [--dry-run]
@@ -62,6 +63,22 @@ branch, and the checkout holding it is where that work happens.
 
 `--base` and `--dirty` only apply while a lane is being created, so both cases 1 and 2
 reject them rather than accepting a flag that would do nothing.
+
+## Names from stdin
+
+With no name on the command line, a bare `lane`, `--base`/`--dirty`, `-d`/`-D` and `-i` take
+names piped on stdin, one per line
+([ADR-018](../decisions/adr-018-names-read-from-stdin.md)). `gh pr view 103 --json
+headRefName -q .headRefName | lane` opens that branch, and `… | lane -d` deletes every name
+the pipeline prints. Opening and `-i` take one name, and a second is a usage error.
+
+A bare `lane` still lists when stdin is a terminal, or yields no names within
+`cli::PIPE_WAIT`. That covers `lane < /dev/null`, CI, and job runners that hold stdin open
+without writing. A name on the command line always wins, and stdin is then never read.
+
+`args::parse_with` receives stdin as a closure and calls it only for those operations, so
+the parser stays pure and `tests/args.rs` drives it without a process. `args::names_from`
+trims each line, drops blank ones, and removes a surrounding pair of double quotes.
 
 ## Parsing and completion
 

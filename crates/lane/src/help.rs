@@ -82,6 +82,8 @@ const ROOT: &str = "
     $ lane fix-login              Creates it, or enters it if it already exists
     $ lane hotfix --base v1.2.0
     $ lane -d fix-login old-spike
+    $ gh pr view 103 --json headRefName -q .headRefName | lane
+                                  A bare lane opens the name piped on stdin
     $ lane -g                     Every lane across every repository lane knows about
     $ lane -g --refresh           Same, but recomputed rather than served from cache
     $ lane -i fix-login           Detail on that lane, from anywhere in the repo
@@ -89,4 +91,5 @@ const ROOT: &str = "
     $ eval \"$(lane --shellenv)\"
 
   A lane may be named anything, including ls or prune.
+  With no name on the command line, lane, -d, -D and -i read names from a piped stdin, one per line.
 ";
